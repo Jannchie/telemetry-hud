@@ -294,6 +294,9 @@ function simulate() {
   D.net.up = Math.max(0, 6e4 + 4e4 * Math.sin(t / 7) + simState.netB * .08 * r());
   D.disks.forEach((d, i) => { const share = i === 0 ? 1 : .25 / i; d.r = simState.ioB * share * r(); d.w = (2e6 + simState.ioB * .3) * share * r(); });
   D.up = (performance.now() - simState.t0) / 1000 + 86400 * 2 + 3600 * 5;
+  // 模拟电池：每 150 秒一轮，100 秒从 96% 放电到 12%，再 50 秒充回去
+  const bc = t % 150, dis = bc < 100, pct = dis ? 96 - .84 * bc : 12 + 1.76 * (bc - 100);
+  D.power = { ...D.power, ac: !dis, battery: { percent: Math.round(pct), charging: !dis && pct < 99.5, remainingMin: dis ? Math.round(pct * 2.4) : null } };
 }
 setInterval(() => {
   if (src === 'LINK' && linkFails > 2) dropSource();
@@ -766,9 +769,29 @@ function wingA(k, now) {
   endDot(P);
   onPath(P, uAtX(P, k ? 1530 : 100), 26, (dir) => drawLog(k ? logs.gpu : logs.cpu, 0, dir, now, k ? -12 : 12));
 
-  // 冠线
+  // 冠线：有电池时兼作电量条
   const Cr = G.crown[k];
-  stroke(Cr, .02, .955, C.line, 1.25);
+  stroke(Cr, CR0, CR1, C.line, 1.25);
+  crownBattery(Cr, now);
+}
+
+// 电池：左右两条冠线从外端（翼线节点）向中心同步填充，长度 = 电量；充电时粒子流向中心，用电池供电时填充头部呼吸，
+// 电量低于 20% 且未充电时闪烁。没有电池（台式机）时什么都不画
+const CR0 = .02, CR1 = .955;
+const batColor = (pct) => pct > 50 ? C.cool : pct > 20 ? C.mark : C.hot;
+function crownBattery(P, now) {
+  const bat = D.power && D.power.battery;
+  if (!bat || bat.percent == null) return;
+  const ua = CR1 - (CR1 - CR0) * clamp01(bat.percent / 100), col = batColor(bat.percent);
+  ctx.globalAlpha = bat.percent <= 20 && !bat.charging ? flicker(now) : 1;
+  stroke(P, ua, CR1, col, 2.5);
+  ctx.globalAlpha = 1;
+  if (bat.charging) particles(P, ua, CR1, 1 - (now * .3) % 1, 5, C.fg);
+  else {
+    const q = P.at(ua);
+    dot(q.x, q.y, 2.5, col);
+    ctx.globalAlpha = .25 + .25 * Math.sin(now * 2.2); ring(q.x, q.y, 5.5, col, 1); ctx.globalAlpha = 1;
+  }
 }
 
 function wingB(k) {
@@ -1178,10 +1201,9 @@ function core(t, now) {
   // 状态行：数据源用一个点 + 词表达；离线时点为警示色并缓慢呼吸
   const live = src === 'LINK' || src === 'LIVELY' || src === 'SIM';
   const word = src === 'LINK' ? 'LIVE' : src === 'LIVELY' ? 'LIVELY' : src === 'SIM' ? 'DEMO' : 'OFFLINE';
-  const pw = D.power, bat = pw && pw.battery;
-  const power = !pw ? 'PWR NO SIGNAL'
-    : bat ? `BAT ${bat.percent}%${bat.charging ? ' CHG' : ''}${bat.remainingMin != null && !bat.charging ? ` ${Math.floor(bat.remainingMin / 60)}h${String(bat.remainingMin % 60).padStart(2, '0')}` : ''}${pw.ac ? ' · AC' : ''}`
-    : pw.ac === false ? 'ON BATTERY' : 'AC POWER';
+  const pw = D.power;
+  // 电量和剩余时间由冠线显示，这里只说供电来源
+  const power = !pw ? 'PWR NO SIGNAL' : pw.ac === false ? 'ON BATTERY' : 'AC POWER';
   // 电源计划 / Windows 11 电源模式：数据源提供时附在电源后面
   const MODE = { 'best-efficiency': 'EFFICIENCY', balanced: 'BALANCED', 'best-performance': 'PERFORMANCE' };
   const plan = pw && [...new Set([pw.plan ? String(pw.plan).toUpperCase() : null, MODE[pw.mode]].filter(Boolean))].join(' / ') || null;
@@ -1496,6 +1518,14 @@ function loadChart(x0, y0, w, h, buf, mirror) {
   txt('60s', xo, base + 12, `8px ${F.mono}`, C.dim, mirror ? 'right' : 'left', .7);
 }
 function cells() {
+  // 电池读数：冠线中心圆环下方，中轴两侧对称——左边电量，右边充电状态 / 剩余时间
+  const bat = D.power && D.power.battery;
+  if (bat && bat.percent != null) {
+    txt(`${bat.percent.toFixed(0)}%`, 950, 302, `12px ${F.mono}`, batColor(bat.percent), 'right');
+    const rm = bat.remainingMin;
+    const st = bat.charging ? 'CHG' : D.power.ac ? (bat.percent >= 99 ? 'FULL' : 'AC') : rm == null ? 'BAT' : rm < 60 ? `${rm}m` : `${Math.floor(rm / 60)}h${pad2(rm % 60)}`;
+    depth(Z1, () => txt(st, 970, 302, `9px ${F.mono}`, bat.charging ? C.cool : C.dim));
+  }
   // CPU
   leader(890, 338, G.A[0], 27);
   dot(896, 338, 3.5, C.mark);
@@ -2069,7 +2099,12 @@ function tour() {
     d.w = i === 0 ? 1.4e8 * dl + 1e6 : 1e5;
     d.busy = i === 0 ? 12 + 86 * dl : i === 1 ? 8 + 90 * load : 4 + 2 * wob(.7, i);
   });
-  D.power = lost ? null : { ...TOUR_BASE.power, cpuW: 42 + 170 * cpuHi };
+  // 电池：前半程插电充电，30 秒拔掉电源开始放电，结尾降到低电量
+  const unplug = T >= 30, pct = unplug ? 92 - 76 * sm(30, 58) : 38 + 54 * sm(2, 28);
+  D.power = lost ? null : {
+    ...TOUR_BASE.power, cpuW: 42 + 170 * cpuHi, ac: !unplug,
+    battery: { percent: Math.round(pct), charging: !unplug && pct < 91.5, remainingMin: unplug ? Math.round(pct * 2.6) : null },
+  };
   D.board = lost ? null : TOUR_BASE.board;
   // 结尾段：曲面与辉光平缓起伏一次
   const fx = bump(48, 52, 56, 60);
