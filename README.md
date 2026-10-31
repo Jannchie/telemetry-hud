@@ -21,7 +21,7 @@ A cyberpunk system-monitor wallpaper for [Wallpaper Engine](https://www.wallpape
 
 Requires Windows 10/11 (x64) and Wallpaper Engine.
 
-1. **Helper**: download `telemetry-hud-helper-*-win-x64.zip` from [Releases](https://github.com/Jannchie/telemetry-hud/releases), unzip it, and double-click `hud-telemetry.exe`.
+1. **Helper**: download `hud-telemetry.exe` from [Releases](https://github.com/Jannchie/telemetry-hud/releases) and double-click it.
    It copies itself to `%LOCALAPPDATA%\TelemetryHUD`, starts automatically when you sign in (no administrator rights needed), and runs in the background right away. You can delete the downloaded file afterwards.
    Windows SmartScreen may warn you on first run because the exe isn't code-signed. Click **More info → Run anyway**.
 2. **Wallpaper**: download `telemetry-hud-wallpaper-*.zip` from the same release and unzip it into
@@ -31,7 +31,13 @@ Without the helper the wallpaper still runs, but every panel shows NO SIGNAL.
 
 ### Optional: CPU temperature
 
-Windows doesn't give regular programs the CPU temperature. To show it, run [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor) and turn on **Options → Remote Web Server** (port 8085). The helper picks it up automatically. GPU temperature and power need an NVIDIA driver.
+Windows doesn't give regular programs the CPU temperature. To show it:
+
+1. Download [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/releases) and run it **as administrator** (it needs admin rights to read CPU sensors).
+2. Turn on **Options → Remote Web Server → Run** (port 8085).
+3. To keep it running after a restart, also turn on **Options → Run On Windows Startup** and **Start Minimized**.
+
+The helper picks it up automatically within about 15 seconds. LibreHardwareMonitor also supplies CPU package power on CPUs where Windows doesn't expose it. GPU temperature and power need an NVIDIA driver.
 
 ## Settings
 

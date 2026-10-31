@@ -21,7 +21,7 @@
 
 需要 Windows 10/11（x64）和 Wallpaper Engine。
 
-1. **helper**：从 [Releases](https://github.com/Jannchie/telemetry-hud/releases) 下载 `telemetry-hud-helper-*-win-x64.zip`，解压后双击 `hud-telemetry.exe`。
+1. **helper**：从 [Releases](https://github.com/Jannchie/telemetry-hud/releases) 下载 `hud-telemetry.exe`，双击运行。
    程序会把自己复制到 `%LOCALAPPDATA%\TelemetryHUD`，设为登录时自动启动（不需要管理员权限），并立刻在后台运行。之后下载的那份可以删掉。
    exe 没有代码签名，第一次运行时 Windows SmartScreen 可能会拦截，点 **更多信息 → 仍要运行** 即可。
 2. **壁纸**：从同一个 Release 下载 `telemetry-hud-wallpaper-*.zip`，解压到
@@ -31,7 +31,13 @@
 
 ### 可选：CPU 温度
 
-Windows 不对普通程序开放 CPU 温度。想显示的话，运行 [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor)，并打开 **Options → Remote Web Server**（端口 8085），helper 会自动读取。GPU 温度和功耗需要 NVIDIA 驱动。
+Windows 不对普通程序开放 CPU 温度。想显示的话：
+
+1. 下载 [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/releases)，**以管理员身份**运行（读取 CPU 传感器需要管理员权限）。
+2. 打开 **Options → Remote Web Server → Run**（端口 8085）。
+3. 想让它重启后也自动运行，再勾选 **Options → Run On Windows Startup** 和 **Start Minimized**。
+
+helper 会在大约 15 秒内自动连上它。在 Windows 不提供 CPU 封装功耗的机器上，这个数据也会从 LibreHardwareMonitor 读取。GPU 温度和功耗需要 NVIDIA 驱动。
 
 ## 设置
 

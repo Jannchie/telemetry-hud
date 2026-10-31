@@ -21,7 +21,7 @@
 
 Windows 10/11（x64）と Wallpaper Engine が必要です。
 
-1. **ヘルパー**：[Releases](https://github.com/Jannchie/telemetry-hud/releases) から `telemetry-hud-helper-*-win-x64.zip` をダウンロードして展開し、`hud-telemetry.exe` をダブルクリックします。
+1. **ヘルパー**：[Releases](https://github.com/Jannchie/telemetry-hud/releases) から `hud-telemetry.exe` をダウンロードして、ダブルクリックします。
    `%LOCALAPPDATA%\TelemetryHUD` に自分自身をコピーし、サインイン時の自動起動を登録して（管理者権限は不要）、そのままバックグラウンドで動き始めます。ダウンロードしたファイルは削除して構いません。
    exe にはコード署名がないため、初回起動時に Windows SmartScreen の警告が出ることがあります。**詳細情報 → 実行** をクリックしてください。
 2. **壁紙**：同じリリースから `telemetry-hud-wallpaper-*.zip` をダウンロードし、
@@ -31,7 +31,13 @@ Windows 10/11（x64）と Wallpaper Engine が必要です。
 
 ### オプション：CPU 温度
 
-Windows は CPU 温度を通常のプログラムに公開していません。表示したい場合は [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor) を起動し、**Options → Remote Web Server**（ポート 8085）を有効にしてください。ヘルパーが自動で読み取ります。GPU の温度と消費電力には NVIDIA ドライバーが必要です。
+Windows は CPU 温度を通常のプログラムに公開していません。表示したい場合は次の手順を行います。
+
+1. [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/releases) をダウンロードし、**管理者として**実行します（CPU センサーの読み取りには管理者権限が必要です）。
+2. **Options → Remote Web Server → Run** を有効にします（ポート 8085）。
+3. 再起動後も動かしておくには、**Options → Run On Windows Startup** と **Start Minimized** も有効にします。
+
+ヘルパーは 15 秒ほどで自動的に接続します。Windows が CPU パッケージ電力を公開していない環境では、この値も LibreHardwareMonitor から読み取ります。GPU の温度と消費電力には NVIDIA ドライバーが必要です。
 
 ## 設定
 

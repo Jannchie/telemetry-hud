@@ -50,7 +50,7 @@ cd helper
 cargo build --release
 ```
 
-产物是 `helper/target/release/hud-telemetry.exe`。发布包：exe 加一份用户说明 `README.txt`，打成 `dist/telemetry-hud-helper-<版本>-win-x64.zip`。
+产物是 `helper/target/release/hud-telemetry.exe`，Release 里直接发布这个 exe（不打包），用户说明见根目录 README。
 
 ## 导出演示视频
 
