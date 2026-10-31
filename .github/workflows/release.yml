@@ -1,0 +1,74 @@
+# 推送 v* tag 时构建 helper、打包壁纸并发布 Release。
+# 更新说明写在 annotated tag 的消息里：git tag -a v0.1.2 -m "- change one" -m "- change two"
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      # checkout 拿到的 tag 不带注释，单独取一次
+      - name: Read version and notes
+        run: |
+          git fetch --force origin "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' helper/Cargo.toml | head -1)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match helper/Cargo.toml version $version"
+            exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          git for-each-ref "refs/tags/$GITHUB_REF_NAME" --format='%(contents:body)' > changes.md
+          if [ ! -s changes.md ] || ! grep -q '[^[:space:]]' changes.md; then
+            git for-each-ref "refs/tags/$GITHUB_REF_NAME" --format='%(contents:subject)' > changes.md
+          fi
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: helper
+
+      - name: Build helper
+        working-directory: helper
+        run: cargo build --release --locked --bin hud-telemetry
+
+      - name: Package wallpaper
+        run: node tools/package-wallpaper.mjs
+
+      - name: Collect assets
+        run: |
+          cp helper/target/release/hud-telemetry.exe dist/
+          cd dist
+          sha256sum -b hud-telemetry.exe "telemetry-hud-wallpaper-$VERSION.zip" > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo '**Downloads**'
+            echo
+            echo '- `hud-telemetry.exe`: the hardware helper. Double-click it to install it with per-user autostart. Double-click it again to uninstall.'
+            echo "- \`telemetry-hud-wallpaper-$VERSION.zip\`: the Wallpaper Engine web wallpaper. Unzip it into \`wallpaper_engine\\projects\\myprojects\\\`."
+            echo '- `SHA256SUMS.txt`: checksums.'
+            echo
+            echo '**Changes**'
+            echo
+            cat changes.md
+            echo
+            echo "The helper isn't code-signed, so SmartScreen may warn on first run. See the [README](https://github.com/$GITHUB_REPOSITORY#readme) for details, including how to show CPU temperature."
+          } > notes.md
+          gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file notes.md \
+            dist/hud-telemetry.exe "dist/telemetry-hud-wallpaper-$VERSION.zip" dist/SHA256SUMS.txt

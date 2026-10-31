@@ -52,6 +52,17 @@ cargo build --release
 
 产物是 `helper/target/release/hud-telemetry.exe`，Release 里直接发布这个 exe（不打包），用户说明见根目录 README。
 
+## 发布
+
+改 `helper/Cargo.toml` 的版本号并提交，然后推送同名的 annotated tag，更新说明写在 tag 消息里（每个 `-m` 一段）：
+
+```bash
+git tag -a v0.1.2 -m "v0.1.2" -m "- First change." -m "- Second change."
+git push origin main v0.1.2
+```
+
+`.github/workflows/release.yml` 会检查 tag 和版本号是否一致，构建 helper、打包壁纸 zip、生成 `SHA256SUMS.txt`，并创建 GitHub Release。
+
 ## 导出演示视频
 
 ```bash
