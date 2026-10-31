@@ -1,0 +1,102 @@
+{
+	"contentrating" : "Everyone",
+	"description" : "Cyber-style system telemetry HUD: CPU (P/E cores), GPU, memory modules, disks and network. Real data comes from the small local hud-telemetry helper (github.com/Jannchie/telemetry-hud); without it, panels show NO SIGNAL.",
+	"file" : "index.html",
+	"general" :
+	{
+		"properties" :
+		{
+			"schemecolor" :
+			{
+				"order" : 0,
+				"text" : "ui_browse_properties_scheme_color",
+				"type" : "color",
+				"value" : "0.047 0.047 0.055"
+			},
+			"theme" :
+			{
+				"order" : 1,
+				"text" : "Theme",
+				"type" : "combo",
+				"value" : "ember",
+				"options" :
+				[
+					{ "label" : "Ember", "value" : "ember" },
+					{ "label" : "Glacier", "value" : "glacier" },
+					{ "label" : "Phosphor", "value" : "phosphor" },
+					{ "label" : "Classic", "value" : "classic" }
+				]
+			},
+			"fx" :
+			{
+				"order" : 2,
+				"text" : "Post-processing (glow / scanlines / curvature)",
+				"type" : "bool",
+				"value" : true
+			},
+			"curve" :
+			{
+				"order" : 3,
+				"text" : "Curvature",
+				"type" : "slider",
+				"value" : 0.5,
+				"min" : 0,
+				"max" : 1.5,
+				"fraction" : true,
+				"precision" : 2,
+				"step" : 0.05,
+				"condition" : "fx.value == true"
+			},
+			"glow" :
+			{
+				"order" : 4,
+				"text" : "Glow",
+				"type" : "slider",
+				"value" : 0.7,
+				"min" : 0,
+				"max" : 1.5,
+				"fraction" : true,
+				"precision" : 2,
+				"step" : 0.05,
+				"condition" : "fx.value == true"
+			},
+			"scan" :
+			{
+				"order" : 5,
+				"text" : "Scanlines",
+				"type" : "slider",
+				"value" : 0.4,
+				"min" : 0,
+				"max" : 1,
+				"fraction" : true,
+				"precision" : 2,
+				"step" : 0.05,
+				"condition" : "fx.value == true"
+			},
+			"sfx" :
+			{
+				"order" : 6,
+				"text" : "Sound volume",
+				"type" : "slider",
+				"value" : 0.35,
+				"min" : 0,
+				"max" : 1,
+				"fraction" : true,
+				"precision" : 2,
+				"step" : 0.05
+			},
+			"hum" :
+			{
+				"order" : 7,
+				"text" : "Ambient hum",
+				"type" : "bool",
+				"value" : true
+			}
+		}
+	},
+	"preview" : "preview.jpg",
+	"tags" : [ "Technology" ],
+	"title" : "Telemetry HUD",
+	"type" : "web",
+	"visibility" : "private"
+}

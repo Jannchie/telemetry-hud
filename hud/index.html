@@ -1,0 +1,2122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Telemetry HUD</title>
+<!-- 字体全部本地打包（OFL 授权），不依赖网络：Michroma、Chakra Petch、JetBrains Mono；由 tools/fetch-fonts.mjs 生成 -->
+<link href="fonts/fonts.css" rel="stylesheet">
+<style>
+  html, body { margin: 0; height: 100%; background: #0e0f11; overflow: hidden; }
+  canvas { display: block; width: 100vw; height: 100vh; }
+  /* 控制面板：叠在后处理画布之上，不受畸变影响 */
+  #hud-panel, #hud-gear { font-family: "Chakra Petch", "Microsoft YaHei UI", "PingFang SC", sans-serif; color: var(--hud-fg); }
+  #hud-panel {
+    position: fixed; top: 16px; right: 16px; z-index: 20; width: 288px; max-height: calc(100vh - 32px); overflow: auto;
+    padding: 14px 16px 12px; background: var(--hud-bg); border: 1px solid var(--hud-line); font-size: 12px;
+    clip-path: polygon(14px 0, 100% 0, 100% 100%, 0 100%, 0 14px);
+    backdrop-filter: blur(6px);
+  }
+  #hud-panel[hidden] { display: none; }
+  #hud-panel header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; letter-spacing: .3em; font-weight: 600; font-size: 11px; }
+  #hud-panel section { padding: 10px 0 4px; border-top: 1px solid var(--hud-line); }
+  #hud-panel h3 { margin: 0 0 8px; font-size: 10px; font-weight: 600; letter-spacing: .25em; color: var(--hud-dim); }
+  #hud-panel button { font: inherit; color: inherit; background: none; border: 1px solid var(--hud-line); cursor: pointer; }
+  #hud-panel button:focus-visible, #hud-panel input:focus-visible, #hud-panel select:focus-visible, #hud-gear:focus-visible { outline: 1px solid var(--hud-hot); outline-offset: 2px; }
+  #hud-panel .x { border: none; font-size: 16px; line-height: 1; padding: 2px 6px; color: var(--hud-dim); }
+  #hud-panel .x:hover { color: var(--hud-fg); }
+  #hud-panel .themes { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  #hud-panel .themes button { display: flex; align-items: center; gap: 3px; padding: 6px 8px; text-align: left; text-transform: uppercase; letter-spacing: .1em; font-size: 10px; }
+  #hud-panel .themes button span { margin-left: 6px; }
+  #hud-panel .themes i { width: 4px; height: 12px; transform: skewX(-20deg); }
+  #hud-panel .themes button[aria-pressed="true"] { border-color: var(--hud-hot); }
+  #hud-panel .themes button:hover { border-color: var(--hud-dim); }
+  #hud-panel label { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 2px 8px; margin: 0 0 10px; }
+  #hud-panel label.sl input { grid-column: 1 / -1; }
+  #hud-panel output { font-variant-numeric: tabular-nums; color: var(--hud-dim); font-size: 11px; }
+  #hud-panel input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 16px; margin: 0; background: transparent; cursor: pointer; }
+  #hud-panel input[type=range]::-webkit-slider-runnable-track { height: 2px; background: linear-gradient(to right, var(--hud-hot) var(--p, 0%), var(--hud-line) var(--p, 0%)); }
+  #hud-panel input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 7px; height: 14px; margin-top: -6px; background: var(--hud-hot); transform: skewX(-20deg); }
+  #hud-panel input[type=range]:disabled { opacity: .35; cursor: default; }
+  #hud-panel input[type=checkbox] {
+    -webkit-appearance: none; appearance: none; width: 30px; height: 12px; margin: 0; border: 1px solid var(--hud-line); position: relative; cursor: pointer;
+  }
+  #hud-panel input[type=checkbox]::after { content: ""; position: absolute; top: 1px; left: 1px; width: 12px; height: 8px; background: var(--hud-dim); transition: transform .15s; }
+  #hud-panel input[type=checkbox]:checked { border-color: var(--hud-hot); }
+  #hud-panel input[type=checkbox]:checked::after { transform: translateX(15px); background: var(--hud-hot); }
+  #hud-panel input[type=checkbox]:disabled { opacity: .35; }
+  #hud-panel select { font: inherit; font-variant-numeric: tabular-nums; color: var(--hud-fg); background: var(--hud-bg); border: 1px solid var(--hud-line); padding: 3px 6px; }
+  #hud-panel footer { display: flex; justify-content: space-between; align-items: center; padding-top: 10px; border-top: 1px solid var(--hud-line); color: var(--hud-dim); font-size: 10px; }
+  #hud-panel footer button { padding: 4px 10px; font-size: 11px; }
+  #hud-panel footer button:hover { border-color: var(--hud-hot); }
+  #hud-gear {
+    position: fixed; top: 10px; right: 10px; z-index: 19; width: 28px; height: 28px; display: grid; place-items: center;
+    background: none; border: 1px solid transparent; opacity: .12; cursor: pointer; transition: opacity .2s, border-color .2s;
+  }
+  #hud-gear:hover, #hud-gear:focus-visible, #hud-gear[aria-expanded="true"] { opacity: 1; border-color: var(--hud-line); }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+/*
+ * 数据源优先级：LINK（本地 helper）> LIVELY（Lively 内置硬件信息）> SIM（模拟数据）
+ *
+ * LINK 端点默认 http://127.0.0.1:27182/stats ，可用 ?endpoint= 覆盖。需要返回 CORS 头。JSON 结构：
+ * {
+ *   "host": "DESKTOP-01",
+ *   "uptime": 12345,                                   // 秒
+ *   "cpu":  { "usage": 37.2, "cores": [12, 80, ...], "coreTypes": ["P", "P", ..., "E"], "freq": 4.21, "temp": 52, "name": "..." },
+ *           // usage/cores 为 0-100，freq 为 GHz；coreTypes 与 cores 一一对应（逻辑处理器的大核 P / 小核 E），可省略
+ *   "gpu":  { "usage": 18.5, "vramUsed": 6.1, "vramTotal": 16, "temp": 48, "power": 120, "clock": 2.4, "name": "..." },
+ *           // vram 单位 GB，power 为 W，clock 为 GHz
+ *   规格（都可省略，缺哪项就不显示哪项）：
+ *   "cpu.spec": { "pCores": 6, "eCores": 8, "threads": 20, "baseClock": 3.5, "boostClock": 5.1, "cacheMB": 24, "tdp": 125 }
+ *   "gpu.spec": { "memType": "GDDR6X", "busWidth": 256, "boostClock": 2.61, "tdp": 285, "driver": "566.36" }
+ *   "mem":  { "used": 14.2, "total": 32, "available": 17.8, "cached": 9.1, "committed": 20.3, "commitLimit": 41.5, "compressed": 0.4,
+ *             "slots": 4, "modules": [ { "slot": "DIMM_A2", "capacity": 16, "type": "DDR5", "speed": 6000, "configuredSpeed": 6000,
+ *             "voltage": 1.35, "manufacturer": "...", "partNumber": "...", "serial": "...", "status": "OK" } ] },  // GB；slots 为主板插槽总数
+ *   "disks":[ { "name": "C:", "type": "NVMe", "used": 412, "total": 1000, "read": 0, "write": 0 } ],  // GB，read/write 为 B/s，type 为 NVMe / SSD / HDD
+ *   "net":  { "up": 0, "down": 0 }                     // B/s
+ *   disks[].busy: 0-100 磁盘忙碌率（100 − % Idle Time）
+ *   disks[].health: { "lifeUsed": 3, "spare": 100, "powerOnHours": 12345, "tbw": 42.1 }   // 拿不到时省略
+ *   "power": { "ac": true, "battery": null | { "percent": 87, "charging": true, "remainingMin": 143 },
+ *              "plan": "Balanced", "mode": "best-efficiency" | "balanced" | "best-performance" | null,
+ *              "cpuW": 65.2 | null, "systemW": 120.5 | null }   // 只接受真实测量值，拿不到为 null
+ *   "board": { "vendor": "...", "product": "...", "bios": "...",
+ *              "slots": [ { "name": "PCIEX16_1", "kind": "PCIe", "width": 16, "gen": 5, "inUse": true, "device": "...", "link": "x16 Gen4" } ],
+ *              "devices": [ { "name": "...", "class": "storage", "bus": "PCIe", "where": "M.2 · PEG60", "link": "x4 Gen4", "disk": "C:" } ] }
+ * }
+ *
+ * 构图：一套左右镜像的贝塞尔引导线，全部从中央透镜的两个尖端或中轴生长出来。
+ *   A 上翼：CPU / GPU 负载带 → 节点（冠线接入）→ 核心梳齿 / 显存块 → 外延射线 + 日志
+ *   B 下翼：磁盘卷 / 温度    → 节点（龙骨接入）→ 读 / 写带       → 外延射线 + 流动粒子
+ *   C 地平线：系统日志
+ *   中轴向上分出冠线，向下分出龙骨（网络波形），透镜上缘为内存
+ * 每个组件都是某条线被打断后的一段，或被线围出的区域里的读数。
+ */
+// 配色：hot = 负载 / 射线主色，cool = 流量 / 次要数据，mark = 标记点与显存，alt = 内存压力告警，heat = 高温告警
+const THEMES = {
+  ember: {
+    bg: '#0c0c0e', bg0: '#16151a', bg1: '#08080a', fg: '#ece6da', dim: '#7c766b', line: '#4a453f', faint: '#2a2723',
+    hot: '#ff6b2c', cool: '#8fd3d6', mark: '#d7f04a', alt: '#c77dff', heat: '#ff2d6f',
+  },
+  glacier: {
+    bg: '#0a0f17', bg0: '#121c2a', bg1: '#070b12', fg: '#e3edf7', dim: '#62748c', line: '#33465c', faint: '#1b2636',
+    hot: '#ff4f70', cool: '#5ee3ff', mark: '#b9a3ff', alt: '#ffb84d', heat: '#ff3d3d',
+  },
+  phosphor: {
+    bg: '#070b08', bg0: '#0f1712', bg1: '#050806', fg: '#d6f5da', dim: '#5d7d63', line: '#2e4634', faint: '#18251b',
+    hot: '#ff9a3c', cool: '#47f5a0', mark: '#f3ef9a', alt: '#ff5577', heat: '#ff2e63',
+  },
+  classic: {
+    bg: '#0e0f11', bg0: '#141619', bg1: '#0a0b0d', fg: '#dfe3e6', dim: '#6b7076', line: '#43484e', faint: '#2a2d31',
+    hot: '#e5243b', cool: '#2bb5a4', mark: '#f4c21b', alt: '#b48cff', heat: '#ff3fa4',
+  },
+};
+const alpha = (hex, a) => {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`;
+};
+let C, themeName;
+function setTheme(name) {
+  themeName = THEMES[name] ? name : 'ember';
+  C = { ...THEMES[themeName] };
+  C.coolDeep = alpha(C.cool, .16);
+  document.body.style.background = C.bg;
+  if (window.hudReady) resize();
+}
+const F = {
+  disp: '"Michroma", "Chakra Petch", sans-serif',
+  ui: '"Chakra Petch", "Segoe UI", sans-serif',
+  mono: '"JetBrains Mono", "Cascadia Mono", Consolas, monospace',
+};
+const TAU = Math.PI * 2;
+const params = new URLSearchParams(location.search);
+const ENDPOINT = params.get('endpoint') || 'http://127.0.0.1:27182/stats';
+let fpsCap = +(params.get('fps') || 0);
+// 底部预留空间（设计像素），?bottom= 可调
+const BOTTOM = +(params.get('bottom') ?? 80);
+setTheme(params.get('theme'));
+
+// ---------- data ----------
+// 实际运行绝不显示模拟数据：没有数据源时所有字段为空，各组件显示 NO SIGNAL。
+// 模拟数据只在 ?demo=1 时启用，用于生成预览图。
+// ?demo=1：随机模拟数据；?demo=tour：脚本化的功能巡演（循环播放各种负载、告警、掉线与主题）
+const TOUR = params.get('demo') === 'tour';
+const DEMO = TOUR || params.get('demo') === '1';
+const emptyData = () => ({
+  host: null, up: null,
+  cpu: { u: null, cores: [], types: [], f: null, t: null, name: null, spec: null },
+  gpu: { u: null, vu: null, vt: null, t: null, power: null, clock: null, name: null, spec: null },
+  mem: { u: null, t: null, avail: null, cache: null, commit: null, cl: null, comp: null, mods: [], slots: 0 },
+  disks: [], net: { up: null, dn: null }, board: null, power: null,
+});
+const DEMO_DATA = {
+  host: 'LOCALHOST', up: 0,
+  cpu: { u: .2, cores: new Array(20).fill(.2), types: [...'PPPPPPPPPPPP', ...'EEEEEEEE'], f: 4.2, t: 50, name: 'Simulated CPU', spec: { pCores: 6, eCores: 8, threads: 20, baseClock: 3.5, boostClock: 5.1, cacheMB: 24, tdp: 125 } },
+  gpu: { u: .1, vu: 4, vt: 16, t: 45, power: 0, clock: 0, name: 'Simulated GPU', spec: { memType: 'GDDR6X', busWidth: 256, boostClock: 2.61, tdp: 285, driver: '566.36' } },
+  mem: {
+    u: 12, t: 32, slots: 4,
+    mods: [
+      { slot: 'DIMM_A2', capacity: 16, type: 'DDR5', speed: 6000, configuredSpeed: 6000, voltage: 1.35, manufacturer: 'Simulated', partNumber: 'SIM-D5-16G', serial: '00000001', status: 'OK' },
+      { slot: 'DIMM_B2', capacity: 16, type: 'DDR5', speed: 6000, configuredSpeed: 6000, voltage: 1.35, manufacturer: 'Simulated', partNumber: 'SIM-D5-16G', serial: '00000002', status: 'OK' },
+    ],
+  },
+  disks: [
+    { n: 'C:', ty: 'NVMe', u: 412, t: 1000, r: 0, w: 0, h: { lifeUsed: 4, spare: 100, powerOnHours: 5210, tbw: 18.4 } },
+    { n: 'D:', ty: 'SSD', u: 1310, t: 2000, r: 0, w: 0, h: { lifeUsed: 37, powerOnHours: 21400, tbw: 96.2 } },
+    { n: 'E:', ty: 'HDD', u: 2620, t: 4000, r: 0, w: 0, h: { powerOnHours: 30120 } },
+  ],
+  net: { up: 0, dn: 0 },
+  power: { ac: true, battery: null, plan: 'High performance', mode: 'balanced', cpuW: 64, systemW: null },
+  board: {
+    vendor: 'Simulated', product: 'Board Z000', bios: '0001',
+    slots: [
+      { name: 'PCIEX16_1', kind: 'PCIe', width: 16, gen: 5, inUse: true, device: 'Simulated GPU', link: 'x16 Gen4' },
+      { name: 'M.2_1', kind: 'M.2', width: 4, gen: 4, inUse: true, device: 'Simulated NVMe', link: 'x4 Gen4' },
+      { name: 'PCIEX1_1', kind: 'PCIe', width: 1, gen: 3, inUse: false },
+      { name: 'PCIEX16_2', kind: 'PCIe', width: 4, gen: 4, inUse: false },
+      { name: 'M.2_2', kind: 'M.2', width: 4, gen: 4, inUse: false },
+    ],
+    devices: [
+      { name: 'Simulated NVMe', class: 'storage', bus: 'PCIe', where: 'M.2_1', link: 'x4 Gen4', disk: 'C:' },
+      { name: 'Simulated 2.5GbE', class: 'network', bus: 'PCIe', where: 'Onboard', link: 'x1 Gen2' },
+      { name: 'Simulated HD Audio', class: 'audio', bus: 'HDA', where: 'Onboard', link: null },
+      { name: 'Simulated SATA SSD', class: 'storage', bus: 'SATA', where: 'SATA 1', link: null, disk: 'D:' },
+    ],
+  },
+};
+const D = DEMO ? DEMO_DATA : emptyData();
+let src = DEMO ? 'SIM' : 'NONE', linkFails = 99, livelyAt = -1e9;
+// 断开数据源时：演示模式回到模拟数据，正常模式清空为 NO SIGNAL
+const dropSource = () => { src = DEMO ? 'SIM' : 'NONE'; if (!DEMO) Object.assign(D, emptyData()); };
+
+// 每次整体覆盖：数据源没提供的字段一律为 null，绝不沿用旧值或模拟值
+const num = (v) => typeof v === 'number' && isFinite(v) ? v : null;
+function ingest(j) {
+  const c = j.cpu || {}, g = j.gpu || {}, m = j.mem || {}, n = j.net || {};
+  D.host = j.host || null; D.up = num(j.uptime);
+  D.cpu = {
+    u: num(c.usage) == null ? null : c.usage / 100,
+    cores: Array.isArray(c.cores) ? c.cores.map(v => v / 100) : [],
+    types: Array.isArray(c.coreTypes) ? c.coreTypes : [],
+    f: num(c.freq), t: num(c.temp), name: c.name || null, spec: c.spec || null,
+  };
+  D.gpu = {
+    u: num(g.usage) == null ? null : g.usage / 100, vu: num(g.vramUsed), vt: num(g.vramTotal), t: num(g.temp),
+    power: num(g.power), clock: num(g.clock), name: g.name || null, spec: g.spec || null,
+  };
+  D.mem = {
+    u: num(m.used), t: num(m.total), avail: num(m.available), cache: num(m.cached), commit: num(m.committed),
+    cl: num(m.commitLimit), comp: num(m.compressed), mods: Array.isArray(m.modules) ? m.modules : [], slots: num(m.slots) || 0,
+  };
+  D.disks = Array.isArray(j.disks)
+    ? j.disks.map(d => ({ n: d.name, ty: d.type || '', u: num(d.used), t: num(d.total), r: num(d.read), w: num(d.write), busy: num(d.busy), h: d.health || null }))
+    : [];
+  D.net = { up: num(n.up), dn: num(n.down) };
+  D.board = j.board || null;
+  D.power = j.power || null;
+}
+
+async function poll() {
+  try {
+    const ctl = new AbortController();
+    const tm = setTimeout(() => ctl.abort(), 800);
+    const r = await fetch(ENDPOINT, { signal: ctl.signal, cache: 'no-store' });
+    clearTimeout(tm);
+    if (!r.ok) throw new Error(r.status);
+    ingest(await r.json());
+    linkFails = 0; src = 'LINK';
+  } catch { linkFails++; }
+  // 连不上时退避到 5s 一次，避免刷屏
+  setTimeout(poll, linkFails > 5 ? 5000 : 1000);
+}
+// 演示模式不连接数据服务，避免真实数据覆盖演示脚本
+if (!DEMO) poll();
+
+// Lively Wallpaper：LivelyInfo.json 中 Arguments 加 --system-information 后会回调这里
+window.livelySystemInformation = (json) => {
+  if (src === 'LINK') return;
+  const o = JSON.parse(json);
+  livelyAt = performance.now(); src = 'LIVELY';
+  // Lively 只提供下面这些字段，其余保持为空（显示 NO SIGNAL）
+  Object.assign(D, emptyData());
+  D.cpu.u = o.CurrentCpu / 100;
+  D.cpu.name = o.NameCpu || null;
+  D.cpu.spec = { threads: navigator.hardwareConcurrency };
+  D.gpu.u = o.CurrentGpu3D / 100;
+  D.gpu.name = o.NameGpu || null;
+  D.mem.t = o.TotalRam / 1024; D.mem.u = (o.TotalRam - o.CurrentRamAvail) / 1024; D.mem.avail = o.CurrentRamAvail / 1024;
+  D.net.up = o.CurrentNetUp; D.net.dn = o.CurrentNetDown;
+};
+
+// Wallpaper Engine：跟随其帧率设置
+window.wallpaperPropertyListener = {
+  applyGeneralProperties(p) { if (p.fps != null) fpsCap = p.fps; },
+  // 在 WE 编辑器里添加一个名为 theme 的组合框属性，值为 ember / glacier / phosphor / classic
+  // WE 用户属性：theme（组合框）、glow / scan / curve / sfx（滑块）、hum / fx（复选框），与控制面板共用一套设置
+  applyUserProperties(p) {
+    const patch = {};
+    if (p.theme) patch.theme = p.theme.value;
+    for (const k of ['glow', 'scan', 'curve', 'sfx']) if (p[k]) patch[k] = +p[k].value;
+    if (p.hum) patch.hum = !!p.hum.value;
+    if (p.fx) patch.fx = !!p.fx.value;
+    applySettings(patch);
+  },
+};
+
+const simState = { cpuB: 0, gpuB: 0, netB: 0, ioB: 0, t0: performance.now() };
+function simulate() {
+  const t = performance.now() / 1000, r = Math.random;
+  const decay = (v) => v * .85;
+  simState.cpuB = r() < .05 ? .3 + r() * .4 : decay(simState.cpuB);
+  simState.gpuB = r() < .03 ? .4 + r() * .5 : decay(simState.gpuB);
+  simState.netB = r() < .06 ? 2e7 + r() * 8e7 : decay(simState.netB);
+  simState.ioB = r() < .05 ? 5e7 + r() * 4e8 : decay(simState.ioB);
+  const cl = (v) => Math.min(1, Math.max(0, v));
+  D.cpu.u = cl(.22 + .14 * Math.sin(t / 13) + .08 * Math.sin(t / 3.7) + (r() - .5) * .06 + simState.cpuB);
+  // 模拟 6P(12T) + 8E：前台负载主要落在大核上
+  D.cpu.cores = D.cpu.cores.map((_, i) => cl(D.cpu.u * (D.cpu.types[i] === 'E' ? .6 : 1.25) + Math.sin(i * 1.7 + t / 2) * .12 + (r() - .5) * .16));
+  D.cpu.f = 3.6 + 1.6 * D.cpu.u; D.cpu.t = 40 + 45 * D.cpu.u;
+  D.gpu.u = cl(.12 + .1 * Math.sin(t / 19) + (r() - .5) * .04 + simState.gpuB);
+  D.gpu.vu = 3.2 + 9 * D.gpu.u; D.gpu.t = 36 + 44 * D.gpu.u;
+  D.gpu.power = 18 + 267 * D.gpu.u; D.gpu.clock = .21 + 2.4 * Math.min(1, D.gpu.u * 3);
+  D.mem.u = 13 + 3 * Math.sin(t / 40) + 6 * simState.cpuB;
+  D.mem.avail = D.mem.t - D.mem.u; D.mem.cache = Math.min(D.mem.avail, 9 + 2 * Math.sin(t / 50));
+  D.mem.commit = D.mem.u * 1.3 + 2; D.mem.cl = D.mem.t + 9.5; D.mem.comp = .3 + .2 * Math.sin(t / 30);
+  D.net.dn = Math.max(0, 4e5 + 3e5 * Math.sin(t / 5) + simState.netB * (.6 + r() * .4));
+  D.net.up = Math.max(0, 6e4 + 4e4 * Math.sin(t / 7) + simState.netB * .08 * r());
+  D.disks.forEach((d, i) => { const share = i === 0 ? 1 : .25 / i; d.r = simState.ioB * share * r(); d.w = (2e6 + simState.ioB * .3) * share * r(); });
+  D.up = (performance.now() - simState.t0) / 1000 + 86400 * 2 + 3600 * 5;
+}
+setInterval(() => {
+  if (src === 'LINK' && linkFails > 2) dropSource();
+  if (src === 'LIVELY' && performance.now() - livelyAt > 4000) dropSource();
+  if (src === 'SIM' && !TOUR) simulate();
+}, 500);
+if (DEMO && !TOUR) simulate();
+
+// ---------- smoothed state ----------
+// 平滑后的读数；null 表示该项没有数据
+const S = {
+  cpu: null, cores: new Float32Array(64), f: null, ct: null, gpu: null, vu: null, gt: null, mem: null,
+  up: null, dn: null, dr: null, dw: null, cpuD: null, gpuD: null, mcache: null, mcommit: null,
+  dio: [], flowD: [], spin: [], scopeMax: 1e6, flow: [0, 0, 0, 0],
+};
+const HIST = 180;
+const netDn = new Float32Array(HIST), netUp = new Float32Array(HIST);
+let histHead = 0, sampleAcc = 0;
+
+// ---------- logs ----------
+class Log {
+  constructor(max) { this.lines = []; this.max = max; this.next = 0; }
+  push(tag, msg, now) {
+    this.lines.unshift({ tag, msg, t: now });
+    if (this.lines.length > this.max) this.lines.pop();
+  }
+}
+const logs = { cpu: new Log(3), gpu: new Log(3), sys: new Log(2), io: new Log(2) };
+const pick = (a) => a[Math.floor(Math.random() * a.length)];
+const pct = (v) => v == null || !isFinite(v) ? '--' : (v * 100).toFixed(0) + '%';
+// 某类核心（'P' / 'E'）的平均负载；没有该类型时返回 null
+const coreAvg = (type) => {
+  let sum = 0, n = 0;
+  for (let i = 0; i < D.cpu.cores.length && i < 64; i++) if (D.cpu.types[i] === type) { sum += S.cores[i]; n++; }
+  return n ? sum / n : null;
+};
+const rate = (b) => b == null ? '--' : b >= 1e9 ? (b / 1e9).toFixed(2) + ' GB/s' : b >= 1e6 ? (b / 1e6).toFixed(1) + ' MB/s' : (b / 1e3).toFixed(0) + ' KB/s';
+// 紧凑速率：用于空间很小的分盘标签
+const rateS = (b) => b == null ? '--' : b >= 1e9 ? (b / 1e9).toFixed(1) + 'G' : b >= 1e6 ? (b / 1e6).toFixed(b >= 1e8 ? 0 : 1) + 'M' : (b / 1e3).toFixed(0) + 'K';
+const thermal = (t) => t < 70 ? 'nominal' : t < 85 ? 'elevated' : 'critical';
+// 平滑一个可能缺失（null）的读数：目标缺失则返回 null，从缺失恢复时直接取新值
+const ease = (cur, target, f) => target == null ? null : cur == null ? target : cur + (target - cur) * f;
+// CPU / GPU 中有数据的那些里的最高温度；都没有时为 null
+// 所有容量已知的盘的已用 / 总量合计；一块都没有时为 [null, null]
+const diskTotals = () => {
+  let u = 0, t = 0, n = 0;
+  for (const d of D.disks) if (d.u != null && d.t) { u += d.u; t += d.t; n++; }
+  return n ? [u, t] : [null, null];
+};
+const peakTemp = () => { const v = [S.ct, S.gt].filter(x => x != null); return v.length ? Math.max(...v) : null; };
+const clock = (s) => {
+  const d = Math.floor(s / 86400), h = Math.floor(s / 3600) % 24, m = Math.floor(s / 60) % 60, x = Math.floor(s) % 60;
+  return `${d}d ${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(x).padStart(2, '0')}`;
+};
+const gens = {
+  cpu: [
+    () => S.cpu == null ? ['cpu', 'Load telemetry · no signal'] : ['cpu', `Load ${pct(S.cpu)} · ${S.f == null ? 'clock no signal' : S.f.toFixed(2) + ' GHz sustained'}`],
+    () => S.ct == null ? ['thm', 'Package sensor · no signal'] : ['thm', `Package ${S.ct.toFixed(0)}°C · ${thermal(S.ct)}`],
+    () => {
+      if (!D.cpu.cores.length) return ['sch', 'Core telemetry · no signal'];
+      const pa = coreAvg('P'), ea = coreAvg('E');
+      return ea != null && pa != null
+        ? ['sch', `P-core ${pct(pa)} · E-core ${pct(ea)}`]
+        : ['sch', `${D.cpu.cores.length} threads online · scheduler balanced`];
+    },
+  ],
+  gpu: [
+    () => S.gpu == null ? ['gpu', '3D engine · no signal'] : ['gpu', `3D engine ${pct(S.gpu)} · ${S.gpu < .3 ? 'idle cycle' : S.gpu < .8 ? 'render active' : 'saturated'}`],
+    () => S.vu == null || D.gpu.vt == null ? ['vram', 'VRAM · no signal'] : ['vram', `${S.vu.toFixed(1)} / ${D.gpu.vt.toFixed(0)} GB · allocated`],
+    () => S.gt == null ? ['thm', 'GPU sensor · no signal'] : ['thm', `GPU core ${S.gt.toFixed(0)}°C · ${thermal(S.gt)}`],
+  ],
+  sys: [
+    () => S.dn == null && S.up == null ? ['net', 'Link telemetry · no signal'] : ['net', `Downlink ${rate(S.dn)} · uplink ${rate(S.up)}`],
+    () => S.mem == null || D.mem.t == null ? ['mem', 'Memory telemetry · no signal'] : ['mem', `${S.mem.toFixed(1)} GB in use · ${pct(S.mem / D.mem.t)} of pool`],
+    () => ['gfx', `Render loop · ${fps.toFixed(0)} fps`],
+  ],
+  io: [
+    () => S.dr == null && S.dw == null ? ['io', 'Throughput · no signal'] : ['io', `Throughput ${rate((S.dr || 0) + (S.dw || 0))} · ${(S.dr || 0) + (S.dw || 0) > 1e8 ? 'burst' : 'steady'}`],
+    () => D.disks.length ? ['fs', `${D.disks.length} volumes mounted · healthy`] : ['fs', 'Volumes · no signal'],
+    () => { const pk = peakTemp(); return pk == null ? ['thm', 'Thermal sensors · no signal'] : ['thm', `Peak ${pk.toFixed(0)}°C · ${thermal(pk)}`]; },
+  ],
+};
+
+// ---------- canvas ----------
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d', { alpha: false });
+const bgLayer = document.createElement('canvas');
+let W, H, dpr, s, ox, oy, EL, ER, ET, EB;
+
+function resize() {
+  dpr = Math.min(window.devicePixelRatio || 1, 2);
+  W = innerWidth; H = innerHeight;
+  cv.width = bgLayer.width = Math.round(W * dpr);
+  cv.height = bgLayer.height = Math.round(H * dpr);
+  // 底部预留 BOTTOM 个设计像素（给任务栏等），整体按 1080 + BOTTOM 的高度适配，内容靠上
+  s = Math.min(W / 1920, H / (1080 + BOTTOM));
+  ox = (W - 1920 * s) / 2; oy = (H - (1080 + BOTTOM) * s) / 2;
+  EL = -ox / s; ER = 1920 + ox / s; ET = -oy / s; EB = (H - oy) / s;
+  // 静态背景层：暗角 + 点阵，只在尺寸变化时重绘
+  const b = bgLayer.getContext('2d');
+  const g = b.createRadialGradient(bgLayer.width / 2, bgLayer.height * .5, 0, bgLayer.width / 2, bgLayer.height * .5, Math.max(bgLayer.width, bgLayer.height) * .7);
+  g.addColorStop(0, C.bg0); g.addColorStop(1, C.bg1);
+  b.fillStyle = g; b.fillRect(0, 0, bgLayer.width, bgLayer.height);
+  b.setTransform(dpr * s, 0, 0, dpr * s, dpr * ox, dpr * oy);
+  b.fillStyle = alpha(C.fg, .045);
+  for (let x = Math.ceil(EL / 48) * 48; x < ER; x += 48)
+    for (let y = Math.ceil(ET / 48) * 48; y < EB; y += 48) b.fillRect(x - .75, y - .75, 1.5, 1.5);
+  build();
+  if (window.hudFx) window.hudFx.resize();
+}
+
+// ---------- geometry ----------
+const lerp = (a, b, t) => a + (b - a) * t;
+
+// 由三次贝塞尔段组成的路径，按弧长参数化（u ∈ [0,1]），法线统一朝“外侧”
+class Path {
+  constructor(segs, n = 48) {
+    const p = [];
+    segs.forEach(([a, b, c, d], k) => {
+      for (let i = k ? 1 : 0; i <= n; i++) {
+        const t = i / n, m = 1 - t;
+        p.push({
+          x: m * m * m * a.x + 3 * m * m * t * b.x + 3 * m * t * t * c.x + t * t * t * d.x,
+          y: m * m * m * a.y + 3 * m * m * t * b.y + 3 * m * t * t * c.y + t * t * t * d.y,
+        });
+      }
+    });
+    const cum = [0];
+    for (let i = 1; i < p.length; i++) cum.push(cum[i - 1] + Math.hypot(p[i].x - p[i - 1].x, p[i].y - p[i - 1].y));
+    this.p = p; this.cum = cum; this.len = cum[cum.length - 1]; this.o = 1;
+    this.n = p.map((_, i) => {
+      const a = p[Math.max(0, i - 1)], b = p[Math.min(p.length - 1, i + 1)];
+      const dx = b.x - a.x, dy = b.y - a.y, l = Math.hypot(dx, dy) || 1;
+      return { x: -dy / l, y: dx / l };
+    });
+  }
+  outer(ref) {
+    this.o = 1;
+    const q = this.at(.5);
+    if (q.nx * (q.x - ref.x) + q.ny * (q.y - ref.y) < 0) this.o = -1;
+    return this;
+  }
+  idx(L) {
+    let lo = 0, hi = this.cum.length - 1;
+    while (hi - lo > 1) { const m = (lo + hi) >> 1; this.cum[m] <= L ? lo = m : hi = m; }
+    return lo;
+  }
+  at(u) {
+    u = Math.min(1, Math.max(0, u));
+    const L = u * this.len, i = this.idx(L), j = Math.min(i + 1, this.p.length - 1);
+    const f = (L - this.cum[i]) / ((this.cum[j] - this.cum[i]) || 1);
+    const a = this.p[i], b = this.p[j], na = this.n[i], nb = this.n[j];
+    let nx = lerp(na.x, nb.x, f), ny = lerp(na.y, nb.y, f);
+    const l = Math.hypot(nx, ny) || 1; nx /= l; ny /= l;
+    return { x: lerp(a.x, b.x, f), y: lerp(a.y, b.y, f), nx: nx * this.o, ny: ny * this.o, a: Math.atan2(-nx, ny), u };
+  }
+  samples(ua, ub) {
+    const out = [this.at(ua)], L0 = ua * this.len, L1 = ub * this.len;
+    for (let i = this.idx(L0) + 1; i < this.p.length && this.cum[i] < L1; i++)
+      out.push({ x: this.p[i].x, y: this.p[i].y, nx: this.n[i].x * this.o, ny: this.n[i].y * this.o, u: this.cum[i] / this.len });
+    out.push(this.at(ub));
+    return out;
+  }
+  trace(ua, ub, off = 0) {
+    this.samples(ua, ub).forEach((q, i) => {
+      const x = q.x + q.nx * off, y = q.y + q.ny * off;
+      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    });
+  }
+}
+
+// 折线 → 贝塞尔段：直线为主，拐角处用过渡弧。r 为过渡长度，可传数组逐个拐角指定；
+// 统一半径时每个拐角最多占相邻线段的一半，逐个指定时放宽到 3/4（由调用方保证同一线段两端加起来不超长）
+function poly(pts, r = 14) {
+  const L = (a, b, t) => ({ x: lerp(a.x, b.x, t), y: lerp(a.y, b.y, t) });
+  const line = (a, b) => [a, L(a, b, 1 / 3), L(a, b, 2 / 3), b];
+  const segs = [];
+  let cur = pts[0];
+  for (let i = 1; i < pts.length - 1; i++) {
+    const a = pts[i - 1], p = pts[i], b = pts[i + 1];
+    const la = Math.hypot(p.x - a.x, p.y - a.y), lb = Math.hypot(b.x - p.x, b.y - p.y);
+    const ri = Array.isArray(r) ? r[i - 1] : r, cap = Array.isArray(r) ? .75 : .5;
+    const p1 = L(p, a, Math.min(ri, la * cap) / la), p2 = L(p, b, Math.min(ri, lb * cap) / lb);
+    segs.push(line(cur, p1), [p1, L(p1, p, .55), L(p2, p, .55), p2]);
+    cur = p2;
+  }
+  segs.push(line(cur, pts[pts.length - 1]));
+  return segs;
+}
+
+// 每条翼线上的分段位置（弧长比例）
+// s0..s1 必须完全落在斜向直线段内（避开两端拐角的过渡弧），否则格子会跟着弧线歪掉
+const U = { s0: .095, s1: .315, join: .43, m0: .47, m1: .69, o0: .73 };
+// 下翼的分盘读写放在最外侧的水平直线段上
+const UB = { io0: .6, io1: .965 };
+const G = {};
+function build() {
+  const M = (p) => ({ x: 1920 - p.x, y: p.y });
+  const MS = (segs) => segs.map(sg => sg.map(M));
+  const P = (x, y) => ({ x, y });
+  const tip = P(820, 540);
+  // 翼线固定画到 x=60，超宽屏多出的部分由 extend() 用直线补齐，保证分段比例不随屏幕变化
+  const A = poly([P(800, 540), P(770, 540), P(590, 330), P(420, 300), P(60, 300)], 18);
+  const B = poly([P(800, 540), P(770, 540), P(600, 730), P(440, 770), P(60, 770)], 18);
+  const Hz = poly([P(780, 540), P(650, 540), P(634, 556), P(60, 556)], 6);
+  // 上缘斜边角度与下方支腿一致（dx:dy = 30:46），支腿就是这条斜边越过尖端后的延长
+  // 两端从左右翼的水平短线以过渡弧拐入斜边；斜边本身越过尖端继续向下就是支腿，形成“道岔”
+  const lensT = poly([P(786, 540), tip, P(850, 494), P(1070, 494), M(tip), P(1134, 540)], [17, 36, 36, 17]);
+
+  // A 的外侧 = 上方（朝向中轴围出的区域），B 的外侧 = 下方
+  G.A = [new Path(A).outer({ x: 300, y: 900 }), new Path(MS(A)).outer({ x: 1620, y: 900 })];
+  G.B = [new Path(B).outer({ x: 300, y: 200 }), new Path(MS(B)).outer({ x: 1620, y: 200 })];
+  G.H = [new Path(Hz).outer({ x: 400, y: 2000 }), new Path(MS(Hz)).outer({ x: 1520, y: 2000 })];
+  G.lensT = new Path(lensT).outer({ x: 960, y: 540 });
+
+  // 冠线：从中轴分出，落在 A 的节点上
+  // 水平走一段后以 45° 斜切落下
+  G.crown = G.A.map((Pa, k) => {
+    const q = Pa.at(U.join), sx = k ? -1 : 1;
+    return new Path(poly([P(960, 280), P(q.x + sx * (q.y - 280), 280), P(q.x, q.y)], 34));
+  });
+  // 龙骨：从 B 的左节点 45° 下沉，水平穿过中轴底端，再升到 B 的右节点
+  const kl = G.B[0].at(U.join), kr = G.B[1].at(U.join), ky = 800;
+  // 装饰括号：在翼线斜段外侧，上下两段与 A / B 斜段平行，中段竖直，地平线从中段穿过
+  const brk = [P(600, 380), P(676, 470), P(676, 610), P(582, 715)];
+  G.brk = [new Path(poly(brk, 36)), new Path(poly(brk.map(M), 36))];
+  G.split = G.B[0].at(UB.io0); G.lanes = null;
+  G.keel = new Path(poly([P(kl.x, kl.y), P(kl.x + (ky - kl.y), ky), P(kr.x - (ky - kr.y), ky), P(kr.x, kr.y)], 36))
+    .outer({ x: 960, y: 540 });
+}
+addEventListener('resize', resize);
+resize();
+window.hudReady = true;
+
+// ---------- draw helpers ----------
+function seg(x1, y1, x2, y2, c, w) {
+  ctx.strokeStyle = c; ctx.lineWidth = w;
+  ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+}
+function dot(x, y, r, c) { ctx.fillStyle = c; ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.fill(); }
+function ring(x, y, r, c, w = 1.5) { ctx.strokeStyle = c; ctx.lineWidth = w; ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.stroke(); }
+function txt(str, x, y, font, color, align = 'left', alpha = 1, ls = 0) {
+  if (SCR > 0) str = scramble(String(str));
+  ctx.font = font; ctx.fillStyle = color; ctx.textAlign = align; ctx.globalAlpha = alpha;
+  if (ls) ctx.letterSpacing = ls + 'px';
+  ctx.fillText(str, x, y);
+  if (ls) ctx.letterSpacing = '0px';
+  ctx.globalAlpha = 1;
+}
+// 无信号时的闪烁：大部分时间稳定，偶尔短暂变暗
+const flicker = (t) => (Math.sin(t * 23) > .93 || Math.sin(t * 7.3) > .97) ? .25 : .9;
+// 信号丢失文字：红青错位叠印，偶尔整体横跳一下
+function glitchText(str, x, y, font, align = 'left') {
+  const now = performance.now() / 1000, jump = (now * 1.7) % 1 < .05 ? Math.sin(now * 90) * 5 : 0;
+  txt(str, x + jump - 1.5, y, font, C.hot, align, .45);
+  txt(str, x + jump + 1.5, y, font, C.cool, align, .45);
+  txt(str, x + jump, y, font, C.fg, align, flicker(now));
+}
+// 无信号格子条：警示色空格 + 一格亮块来回扫描（像在搜索信号）
+function noSigBar(P, a, b, h, off, seed = 0, n = 0) {
+  const cnt = n || Math.max(3, Math.floor((b - a) * P.len / 9)), now = performance.now() / 1000;
+  cellBar(P, a, b, h, 0, C.hot, off, cnt, Math.round((Math.sin(now * 2.2 + seed) * .5 + .5) * (cnt - 1)));
+}
+function noSigLabel(P, u, off, str, seed = 0) {
+  pathLabel(P, u, off, str, `600 9px ${F.ui}`, C.hot, flicker(performance.now() / 1000 + seed), 2);
+}
+function stroke(P, ua, ub, color, w, off = 0) {
+  ctx.strokeStyle = color; ctx.lineWidth = w; ctx.beginPath(); P.trace(ua, ub, off); ctx.stroke();
+}
+// 在路径某点按切线方向放置内容，自动翻转保证文字朝上；fn 收到外侧法线在局部坐标中的 y 方向
+function onPath(P, u, off, fn) {
+  const q = P.at(u);
+  let a = q.a;
+  if (Math.cos(a) < 0) a += Math.PI;
+  const ly = -Math.sin(a) * q.nx + Math.cos(a) * q.ny;
+  ctx.save(); ctx.translate(q.x + q.nx * off, q.y + q.ny * off); ctx.rotate(a); fn(ly < 0 ? -1 : 1); ctx.restore();
+}
+// 沿路径的分段格子条：贴在线的一侧（off>0 外侧，off<0 内侧），格子为斜切平行四边形，按格量化填充
+// h 可以是数字，或 [起点高度, 终点高度] 表示由细到粗；斜切角度固定，所以不同高度的格子短边仍然互相平行
+// hi：额外高亮的格子序号（无信号时做来回扫描的亮块），-1 表示不高亮
+function cellBar(P, ua, ub, h, frac, color, off = 4, n = 0, hi = -1) {
+  const len = (ub - ua) * P.len;
+  n = n || Math.max(3, Math.floor(len / 9));
+  const [h0, h1] = Array.isArray(h) ? h : [h, h];
+  const hAt = (i) => lerp(h0, h1, n > 1 ? i / (n - 1) : 1);
+  const step = (ub - ua) / n, fill = Math.round(Math.min(1, Math.max(0, frac)) * n);
+  const sd = off < 0 ? -1 : 1, o0 = off, slant = .45 / P.len;
+  const quad = (i) => {
+    const a = ua + step * i, b = a + step * .68, hi = hAt(i), o1 = o0 + sd * hi, skew = hi * slant;
+    const p0 = P.at(a), p1 = P.at(b), p2 = P.at(b + skew), p3 = P.at(a + skew);
+    ctx.moveTo(p0.x + p0.nx * o0, p0.y + p0.ny * o0);
+    ctx.lineTo(p1.x + p1.nx * o0, p1.y + p1.ny * o0);
+    ctx.lineTo(p2.x + p2.nx * o1, p2.y + p2.ny * o1);
+    ctx.lineTo(p3.x + p3.nx * o1, p3.y + p3.ny * o1);
+    ctx.closePath();
+  };
+  ctx.fillStyle = color;
+  ctx.globalAlpha = .16; ctx.beginPath(); for (let i = fill; i < n; i++) quad(i); ctx.fill();
+  ctx.globalAlpha = 1; ctx.beginPath(); for (let i = 0; i < fill; i++) quad(i); ctx.fill();
+  if (hi >= 0 && hi < n) { ctx.globalAlpha = .8; ctx.beginPath(); quad(hi); ctx.fill(); ctx.globalAlpha = 1; }
+  // 两端的定位刻度：与格子同样的斜切角度，保证所有短边互相平行
+  const shift = (o) => (o - o0) * sd * slant;
+  ctx.strokeStyle = color; ctx.lineWidth = 1; ctx.globalAlpha = .6; ctx.beginPath();
+  for (const [u, he] of [[ua - step * .32, h0], [ub, h1]]) {
+    const t0 = -sd * 3, t1 = o0 + sd * (he + 3);
+    const qa = P.at(u + shift(t0)), qb = P.at(u + shift(t1));
+    ctx.moveTo(qa.x + qa.nx * t0, qa.y + qa.ny * t0); ctx.lineTo(qb.x + qb.nx * t1, qb.y + qb.ny * t1);
+  }
+  ctx.stroke(); ctx.globalAlpha = 1;
+  stroke(P, ua, ub, C.line, 1);
+}
+
+// 机械计数器式滚动数字：最低位随小数连续滚动，进位时高位一起滚
+function odo(x, y, val, intD, decD, size, color, align, ghost) {
+  ctx.font = `${size}px ${F.mono}`; ctx.textAlign = 'left'; ctx.fillStyle = color;
+  const cw = ctx.measureText('0').width, dw = decD ? cw * .55 : 0, n = intD + decD, w = n * cw + dw;
+  let cx = align === 'right' ? x - w : align === 'center' ? x - w / 2 : x;
+  const v = Math.max(0, val) * 10 ** decD;
+  let iv = Math.floor(v), carry = v - iv;
+  const dig = [], roll = [];
+  for (let p = 0; p < n; p++) { const d = iv % 10; dig[p] = d; roll[p] = carry; carry = d === 9 ? carry : 0; iv = Math.floor(iv / 10); }
+  const sig = String(Math.floor(Math.max(0, val))).length;
+  const lh = size * 1.08;
+  const al = (off, base) => base * Math.max(0, 1 - Math.abs(off) / lh * .82);
+  // 所有位只露出当前行，进位滚动不会叠成一串；最低位另在行外画淡残影
+  const band = lh * .55;
+  let lowX = cx, lowD = 0, lowR = 0;
+  ctx.save(); ctx.beginPath(); ctx.rect(cx - 2, y - band, w + 4, band * 2); ctx.clip();
+  for (let c = 0; c < n; c++) {
+    if (c === intD) {
+      ctx.globalAlpha = 1;
+      ctx.fillText('.', cx + (dw - ctx.measureText('.').width) / 2, y);
+      cx += dw;
+    }
+    const p = n - 1 - c, d = dig[p], r = roll[p];
+    const base = p - decD >= sig ? .16 : 1;
+    ctx.globalAlpha = al(-r * lh, base); ctx.fillText(d, cx, y - r * lh);
+    if (r > .001) { ctx.globalAlpha = al((1 - r) * lh, base); ctx.fillText((d + 1) % 10, cx, y + (1 - r) * lh); }
+    if (p === 0) { lowX = cx; lowD = d; lowR = r; }
+    cx += cw;
+  }
+  ctx.restore();
+  if (ghost) {
+    ctx.save(); ctx.beginPath();
+    ctx.rect(lowX - 2, y - band - lh * 1.6, cw + 4, lh * 1.6); ctx.rect(lowX - 2, y + band, cw + 4, lh * 1.6);
+    ctx.clip();
+    for (let j = -1; j <= 2; j++) {
+      const off = (j - lowR) * lh;
+      ctx.globalAlpha = .22 * Math.max(0, 1 - Math.abs(off) / (lh * 1.9));
+      ctx.fillText((lowD + j + 10) % 10, lowX, y + off);
+    }
+    ctx.restore();
+  }
+  ctx.globalAlpha = 1;
+  return w;
+}
+
+// [tag] 首段 · 其余  —— 首段白色，其余青色，可带打字进度
+function tagWidth(tag, msg) {
+  ctx.font = `11px ${F.mono}`; const a = ctx.measureText(tag).width;
+  ctx.font = `12px ${F.ui}`; return a + 18 + ctx.measureText(msg).width;
+}
+function tagLine(tag, msg, x, y, alpha, shown = Infinity) {
+  ctx.globalAlpha = alpha; ctx.textAlign = 'left';
+  ctx.font = `11px ${F.mono}`;
+  const tw = ctx.measureText(tag).width;
+  ctx.strokeStyle = C.line; ctx.lineWidth = 1;
+  ctx.strokeRect(x + .5, y - 7.5, tw + 10, 15);
+  ctx.fillStyle = C.dim; ctx.fillText(tag, x + 5, y + .5);
+  const vis = msg.slice(0, shown);
+  const cut = msg.indexOf(' · ');
+  const head = cut < 0 ? vis : vis.slice(0, cut), tail = cut < 0 ? '' : vis.slice(cut);
+  ctx.font = `12px ${F.ui}`;
+  let mx = x + tw + 18;
+  ctx.fillStyle = C.fg; ctx.fillText(head, mx, y); mx += ctx.measureText(head).width;
+  if (tail) { ctx.fillStyle = C.cool; ctx.fillText(tail, mx, y); mx += ctx.measureText(tail).width; }
+  if (shown < msg.length) { ctx.fillStyle = C.cool; ctx.fillRect(mx + 2, y - 5, 6, 10); }
+  ctx.globalAlpha = 1;
+}
+// slant：每往外一层横向错开的距离，堆叠后整体呈平行四边形
+function drawLog(log, y0, dir, now, slant = 0) {
+  const fade = [1, .5, .26];
+  log.lines.forEach((L, i) => {
+    tagLine(L.tag, L.msg, i * slant, y0 * dir + dir * i * 17, fade[i], Math.floor((now - L.t) * 80));
+  });
+}
+function pathLabel(P, u, off, str, font, color, alpha = 1, ls = 0) {
+  onPath(P, u, off, () => txt(str, 0, 0, font, color, 'center', alpha, ls));
+}
+
+// ---------- components ----------
+// 翼线上的节点：线在此断开，留一个小环
+function node(P, u, r = 4) { const q = P.at(u); ring(q.x, q.y, r, C.fg, 1.25); }
+function endDot(P) {
+  // 超宽屏：从 x=60 处用直线延伸到屏幕边缘
+  const q = P.at(1), ex = q.x < 960 ? Math.min(q.x, EL + 60) : Math.max(q.x, ER - 60);
+  if (ex !== q.x) seg(q.x, q.y, ex, q.y, C.hot, 2.5);
+  dot(ex, q.y, 4.5, C.fg);
+}
+// 信号脉冲：一小段亮线沿骨架从中心向外跑，跑完后停顿一会儿再出发
+function pulse(P, t, speed, phase, ua = 0, ub = 1, rev = false) {
+  const span = (ub - ua) * P.len, cyc = span / speed * 1.6;
+  const f = ((t + phase * cyc) % cyc) / cyc * 1.6;
+  if (f > 1) return;
+  const len = 46 / P.len;
+  let a = ua + (ub - ua) * f;
+  if (rev) a = ub - (a - ua);
+  const b = rev ? Math.min(ub, a + len) : Math.max(ua, a - len);
+  ctx.globalAlpha = Math.sin(Math.PI * f) * .85;
+  stroke(P, Math.min(a, b), Math.max(a, b), C.fg, 1.5);
+  ctx.globalAlpha = 1;
+}
+function particles(P, ua, ub, phase, n, color) {
+  ctx.fillStyle = color;
+  for (let i = 0; i < n; i++) {
+    const f = (i / n + phase) % 1, q = P.at(ua + (ub - ua) * f);
+    ctx.globalAlpha = Math.sin(Math.PI * f) * .9;
+    ctx.fillRect(q.x - 1.5, q.y - 1.5, 3, 3);
+  }
+  ctx.globalAlpha = 1;
+}
+
+function wingA(k, now) {
+  const P = G.A[k], load = k ? S.gpu : S.cpu;
+  stroke(P, 0, U.s0 - .01, C.line, 1.5);
+  if (load == null) { noSigBar(P, U.s0, U.s1, [4, 18], 4, k); noSigLabel(P, (U.s0 + U.s1) / 2, -14, `${k ? 'GPU' : 'CPU'} · NO SIGNAL`, k); }
+  else cellBar(P, U.s0, U.s1, [4, 18], load, C.hot, 4);
+  stroke(P, U.s1 + .008, U.join - .012, C.line, 1.5);
+  node(P, U.join);
+  stroke(P, U.join + .012, U.m0 - .008, C.line, 1.5);
+  if (k === 0 && !D.cpu.cores.length) {
+    noSigBar(P, U.m0, U.m1, 8, 5, 2);
+    noSigLabel(P, (U.m0 + U.m1) / 2, -14, 'CORES · NO SIGNAL', 2);
+  } else if (k === 0) {
+    // CPU 核心：沿线外侧的梳齿，大核 / 小核分成两组，中间断开
+    const n = Math.min(D.cpu.cores.length, 64), types = D.cpu.types;
+    const pIdx = [], eIdx = [];
+    for (let i = 0; i < n; i++) (types[i] === 'E' ? eIdx : pIdx).push(i);
+    const groups = eIdx.length && pIdx.length
+      ? [[pIdx, 'P-CORE', C.cool, 1, 30], [eIdx, 'E-CORE', C.fg, .6, 20]]
+      : [[pIdx.length ? pIdx : eIdx, 'THREADS', C.cool, 1, 30]];
+    const gap = .018, avail = U.m1 - U.m0 - gap * (groups.length - 1);
+    ctx.lineWidth = Math.max(1.2, Math.min(3, avail * P.len / n * .5));
+    let u0 = U.m0;
+    for (const [idx, name, col, al, amp] of groups) {
+      const span = avail * idx.length / n;
+      stroke(P, u0, u0 + span, C.faint, 1);
+      idx.forEach((ci, j) => {
+        const v = S.cores[ci], q = P.at(u0 + span * (j + .5) / idx.length), len = 3 + v * amp;
+        ctx.strokeStyle = v > .85 ? C.hot : col; ctx.globalAlpha = v > .85 ? 1 : al;
+        ctx.beginPath(); ctx.moveTo(q.x + q.nx * 5, q.y + q.ny * 5); ctx.lineTo(q.x + q.nx * (5 + len), q.y + q.ny * (5 + len)); ctx.stroke();
+      });
+      ctx.globalAlpha = 1;
+      pathLabel(P, u0 + span / 2, -14, `${name} ×${idx.length}`, `600 9px ${F.ui}`, C.dim, 1, 2);
+      u0 += span + gap;
+    }
+  } else {
+    // 显存：每格 1 GB
+    if (S.vu == null || !D.gpu.vt) {
+      noSigBar(P, U.m0, U.m1, 8, 5, 3);
+      noSigLabel(P, (U.m0 + U.m1) / 2, -14, 'VRAM · NO SIGNAL', 3);
+    } else {
+      cellBar(P, U.m0, U.m1, 8, S.vu / D.gpu.vt, C.mark, 5, Math.max(4, Math.min(32, Math.round(D.gpu.vt))));
+      pathLabel(P, (U.m0 + U.m1) / 2, -14, `VRAM ${S.vu.toFixed(1)} / ${D.gpu.vt.toFixed(0)} GB`, `600 9px ${F.ui}`, C.dim, 1, 2);
+    }
+  }
+  stroke(P, U.m1 + .008, U.o0 - .006, C.line, 1.5);
+  stroke(P, U.o0, 1, C.hot, 2.5);
+  particles(P, U.o0, 1, S.flow[k], 7, C.fg);
+  endDot(P);
+  onPath(P, uAtX(P, k ? 1530 : 100), 26, (dir) => drawLog(k ? logs.gpu : logs.cpu, 0, dir, now, k ? -12 : 12));
+
+  // 冠线
+  const Cr = G.crown[k];
+  stroke(Cr, .02, .955, C.line, 1.25);
+}
+
+function wingB(k) {
+  const P = G.B[k];
+  stroke(P, 0, U.s0 - .01, C.line, 1.5);
+  if (k === 0) {
+    // 总容量：斜段上一条格子条，左下格子的 STORAGE 引线指向这里
+    const [used, total] = diskTotals();
+    if (total == null) {
+      noSigBar(P, U.s0, U.s1, 7, -4, 4);
+      noSigLabel(P, (U.s0 + U.s1) / 2, 14, 'VOLUMES · NO SIGNAL', 4);
+    } else {
+      cellBar(P, U.s0, U.s1, 7, used / total, C.fg, -4);
+      const nH = D.disks.filter(d => d.ty === 'HDD').length, nS = D.disks.length - nH;
+      pathLabel(P, (U.s0 + U.s1) / 2, 14, nH ? `${nS} SSD · ${nH} HDD` : `${D.disks.length} VOLUMES`, `600 9px ${F.ui}`, C.dim, 1, 2);
+    }
+  } else {
+    // 温度：CPU / GPU 两节，颜色随温度变化
+    const items = [['CPU', S.ct], ['GPU', S.gt]], span = (U.s1 - U.s0) / 2, bothLost = S.ct == null && S.gt == null;
+    if (bothLost) noSigLabel(P, (U.s0 + U.s1) / 2, 14, 'TEMPS · NO SIGNAL', 1.3);
+    items.forEach(([n, t], i) => {
+      const a = U.s0 + span * i + .008, b = U.s0 + span * (i + 1) - .008;
+      if (t == null) {
+        noSigBar(P, a, b, 6, -4, i * 1.3);
+        if (!bothLost) noSigLabel(P, (a + b) / 2, 14, `${n} · NO SIG`, i * 3.1);
+      } else {
+        cellBar(P, a, b, 6, (t - 25) / 75, t >= 85 ? C.hot : t >= 70 ? C.mark : C.cool, -4);
+        pathLabel(P, (a + b) / 2, 14, `${n} ${t.toFixed(0)}°C`, `11px ${F.mono}`, C.dim);
+      }
+    });
+  }
+  stroke(P, U.s1 + .008, U.join - .012, C.line, 1.5);
+  node(P, U.join);
+  // 节点之后是一段传输线，粒子流速跟随总读 / 写吞吐
+  stroke(P, U.join + .012, UB.io0, C.hot, 2.5);
+  particles(P, U.join + .012, UB.io0, S.flow[2 + k], 5, C.cool);
+  if (k === 0) { diskLanes(); return; }
+  // 右翼：总读 / 写两条格子条
+  const mid = (UB.io0 + UB.io1) / 2;
+  stroke(P, UB.io0, 1, C.hot, 2.5);
+  [[UB.io0 + .012, mid - .008, S.dr, 'READ'], [mid + .008, UB.io1, S.dw, 'WRITE']].forEach(([a, b, v, name], i) => {
+    if (v == null) { noSigBar(P, a, b, 8, -4, 5 + i); noSigLabel(P, (a + b) / 2, 14, `${name} · NO SIGNAL`, 5 + i); return; }
+    cellBar(P, a, b, 8, Math.log10(1 + v / 1e5) / 4, C.cool, -4);
+    pathLabel(P, (a + b) / 2, 14, `${name} ${rate(v)}`, `10px ${F.mono}`, C.dim);
+  });
+  endDot(P);
+  slotLanes();
+}
+
+// 主板插槽支路：与左下的磁盘支路镜像。从右下翼分流点竖直引出主干，每个插槽一条水平支路，往下每条向左错开 skew。
+// 插着设备：实线 + 粒子；中间格子数 = 槽位通道数，亮起格数 = 实际协商的通道数。空槽：虚线 + EMPTY。
+const SLOT = { x1: 1836, gap: 30, skew: 12, top: 822 };
+function slotLanes() {
+  const b = D.board;
+  // 设备树：先列固件插槽表里的插槽（含插在上面的设备），再列不在插槽表里的板载 / M.2 / SATA / 音频设备
+  const slotList = b && Array.isArray(b.slots) ? b.slots : [];
+  const slotNames = new Set(slotList.map(sl => sl.name));
+  const CLASS_ORDER = ['display', 'storage', 'network', 'wireless', 'audio', 'other'];
+  const devs = (b && Array.isArray(b.devices) ? b.devices : []).filter(d => !slotNames.has(d.where));
+  const asEntry = (d) => ({
+    name: d.where || d.bus || '', kind: [d.bus, d.class && d.class.toUpperCase()].filter(Boolean).join(' · '),
+    width: +((d.link || '').match(/x(\d+)/i) || [])[1] || 0, inUse: true,
+    device: d.disk ? `${d.name} · ${d.disk}` : d.name, link: d.link,
+  });
+  const extra = devs.filter(d => d.bus !== 'USB')
+    .sort((x, y) => CLASS_ORDER.indexOf(x.class) - CLASS_ORDER.indexOf(y.class)).map(asEntry);
+  // USB 设备合并成一条
+  const usbDevs = devs.filter(d => d.bus === 'USB');
+  const usb = usbDevs.length ? [{
+    name: 'USB', kind: 'USB · ' + [...new Set(usbDevs.map(d => (d.class || 'other').toUpperCase()))].join(' / '),
+    width: 0, inUse: true, device: usbDevs.map(d => d.name).join(' / '), link: null,
+  }] : [];
+  // 插在插槽上的存储设备补上盘符
+  const disksAt = Object.fromEntries((b && b.devices || []).filter(d => slotNames.has(d.where) && d.disk).map(d => [d.where, d.disk]));
+  const isUsed = (sl) => sl.inUse ?? !!sl.device;
+  const usedSlots = slotList.filter(isUsed).map(sl => disksAt[sl.name] && sl.device ? { ...sl, device: `${sl.device} · ${disksAt[sl.name]}` } : sl);
+  // 空槽按“类型 + 通道数”合并成一条
+  const groups = {};
+  for (const sl of slotList.filter(sl => !isUsed(sl))) (groups[`${sl.kind}|${sl.width}`] ||= []).push(sl);
+  const emptyEntries = Object.values(groups).map(g => ({
+    name: g.map(x => x.name).join(' '), kind: g[0].kind, width: g[0].width, gen: g[0].gen,
+    inUse: false, device: g.length > 1 ? `${g.length} × EMPTY` : 'EMPTY',
+  }));
+  const entries = [...usedSlots, ...extra, ...usb, ...emptyEntries];
+  if (!entries.length) {
+    const x0 = 1920 - G.split.x, y0 = G.split.y;
+    ctx.setLineDash([4, 4]); seg(x0, y0, x0, SLOT.top, C.line, 1); seg(x0, SLOT.top, SLOT.x1, SLOT.top, C.line, 1); ctx.setLineDash([]);
+    dot(x0, y0, 2.5, C.dim);
+    glitchText('MAINBOARD · NO SIGNAL', SLOT.x1, SLOT.top - 10, `600 10px ${F.ui}`, 'right');
+    if (b && (b.vendor || b.product)) txt(cleanName([b.vendor, b.product].filter(Boolean).join(' ')).toUpperCase(), SLOT.x1, SLOT.top + 14, `9px ${F.mono}`, C.dim, 'right');
+    return;
+  }
+  const ss = entries.slice(0, 8), n = ss.length, x0 = 1920 - G.split.x, y0 = G.split.y;
+  const yN = SLOT.top + (n - 1) * SLOT.gap;
+  seg(x0, y0, x0 - (n - 1) * SLOT.skew, yN, C.line, 1.5);
+  dot(x0, y0, 2.5, C.fg);
+  const now = performance.now() / 1000;
+  ss.forEach((sl, i) => {
+    const y = SLOT.top + i * SLOT.gap, xa = x0 - i * SLOT.skew, xb = SLOT.x1 - i * SLOT.skew;
+    const used = sl.inUse ?? !!sl.device;
+    const width = sl.width || 0, linkW = +((sl.link || '').match(/x(\d+)/i) || [])[1] || (used ? width : 0);
+    ctx.globalAlpha = used ? .75 : 1;
+    if (!used) ctx.setLineDash([4, 4]);
+    seg(xa, y, xb, y, used ? C.hot : C.line, used ? 1.5 : 1);
+    ctx.setLineDash([]); ctx.globalAlpha = 1;
+    dot(xa, y, 2, used ? C.fg : C.line);
+    if (used) {
+      // 粒子：沿支路向外流动
+      ctx.fillStyle = C.cool;
+      for (let j = 0; j < 4; j++) {
+        const f = (j / 4 + now * .12 + i * .17) % 1;
+        ctx.globalAlpha = Math.sin(Math.PI * f) * .9;
+        ctx.fillRect(xa + (xb - xa) * f - 1.5, y - 1.5, 3, 3);
+      }
+      ctx.globalAlpha = 1;
+    }
+    // 通道格子
+    if (width) {
+      // 通道格子放在设备名（左，限宽 120）与位置名（右，限宽 90）之间的空档
+      const L = new Path(poly([{ x: xa + 136, y }, { x: xb - 100, y }])).outer({ x: 1700, y: 3000 });
+      cellBar(L, 0, 1, 5, width ? linkW / width : 0, used ? C.cool : C.dim, 3, width);
+    }
+    // 文字：上方设备名 / 槽位名，下方规格 / 链路
+    ctx.font = `10px ${F.ui}`;
+    txt(fit(used ? (sl.device || 'DEVICE') : (sl.device || 'EMPTY'), 120), xa + 8, y - 8, `10px ${F.ui}`, used ? C.fg : C.dim, 'left', used ? .9 : .6);
+    ctx.font = `600 9px ${F.ui}`;
+    txt(fit(String(sl.name || '').replace(/^Onboard · /i, '').toUpperCase(), 90), xb, y - 8, `600 9px ${F.ui}`, C.dim, 'right', 1, 1.5);
+    const spec = [sl.kind, width ? `x${width}` : '', sl.gen ? `Gen${sl.gen}` : ''].filter(Boolean).join(' ');
+    txt(spec, xa + 8, y + 9, `9px ${F.mono}`, C.dim);
+    if (used && sl.link) txt(sl.link, xb, y + 9, `9px ${F.mono}`, C.cool, 'right');
+  });
+  // 主板型号与 BIOS
+  const name = [b.vendor, b.product].filter(Boolean).join(' ');
+  if (name) {
+    const y = yN + 30, xr = SLOT.x1 - (n - 1) * SLOT.skew;
+    txt(cleanName(name).toUpperCase().slice(0, 40), xr, y, `600 11px ${F.ui}`, C.fg, 'right', .9, 1);
+    if (b.bios) txt(`BIOS ${b.bios}`, xr, y + 15, `9px ${F.mono}`, C.dim, 'right');
+  }
+}
+
+
+// 并联磁盘支路：左下翼在分流点分出若干条平行水平支路，每往下一条向右错开 skew，每条一块盘，外端汇到汇流排后继续延伸到端点
+const LANE = { x1: 84, gap: 46, skew: 18 };
+function diskLanes() {
+  const ds = D.disks.slice(0, 5), n = ds.length;
+  if (!n) {
+    const x0 = G.split.x, y0 = G.split.y, ex = Math.min(60, EL + 60);
+    ctx.setLineDash([4, 4]); seg(x0, y0, LANE.x1, y0, C.line, 1); ctx.setLineDash([]);
+    seg(LANE.x1, y0, ex, y0, C.hot, 2.5); dot(ex, y0, 4.5, C.fg);
+    glitchText('STORAGE · NO SIGNAL', LANE.x1 + 12, y0 - 12, `600 10px ${F.ui}`);
+    return;
+  }
+  const x0 = G.split.x, y0 = G.split.y, yN = y0 + (n - 1) * LANE.gap;
+  if (!G.lanes || G.lanes.length !== n)
+    G.lanes = ds.map((_, i) => new Path(poly([{ x: x0 + i * LANE.skew, y: y0 + i * LANE.gap }, { x: LANE.x1 + i * LANE.skew, y: y0 + i * LANE.gap }])).outer({ x: 240, y: 3000 }));
+  seg(x0, y0, x0 + (n - 1) * LANE.skew, yN, C.hot, 1.5);
+  seg(LANE.x1, y0, LANE.x1 + (n - 1) * LANE.skew, yN, C.line, 1.5);
+  ds.forEach((d, i) => {
+    const L = G.lanes[i], y = y0 + i * LANE.gap, io = S.dio[i] || [null, null], xa = x0 + i * LANE.skew, xb = LANE.x1 + i * LANE.skew;
+    // 三种盘的画法差异：NVMe 双轨 + 密格 + 多粒子；SATA SSD 单轨；HDD 虚线 + 粗格 + 起点小盘片
+    const hdd = d.ty === 'HDD', nvme = d.ty === 'NVMe', span = (.54 - .08) * L.len;
+    ctx.globalAlpha = .75;
+    if (nvme) { stroke(L, 0, 1, C.hot, 1, -1.8); stroke(L, 0, 1, C.hot, 1, 1.8); }
+    else {
+      if (hdd) ctx.setLineDash([5, 4]);
+      stroke(L, 0, 1, C.hot, 1.5);
+      ctx.setLineDash([]);
+    }
+    ctx.globalAlpha = 1;
+    dot(xa, y, 2.5, C.fg); dot(xb, y, 2, C.dim);
+    particles(L, 0, 1, S.flowD[i] || 0, nvme ? 7 : hdd ? 3 : 4, C.cool);
+    if (d.u == null || !d.t) noSigBar(L, .08, .54, hdd ? 7 : 6, 3, i);
+    else cellBar(L, .08, .54, hdd ? 7 : 6, d.u / d.t, C.fg, 3, Math.round(span / (nvme ? 6 : hdd ? 14 : 9)));
+    if (hdd) {
+      // 盘片：转速随这块盘的读写量变化
+      const q = L.at(.04), a = S.spin[i] || 0;
+      ctx.fillStyle = C.bg; ctx.beginPath(); ctx.arc(q.x, q.y, 5.5, 0, TAU); ctx.fill();
+      ring(q.x, q.y, 5.5, C.mark, 1);
+      seg(q.x, q.y, q.x + Math.cos(a) * 5.5, q.y + Math.sin(a) * 5.5, C.mark, 1);
+      dot(q.x, q.y, 1.2, C.mark);
+    }
+    txt(d.n, xb + 12, y - 9, `600 11px ${F.ui}`, C.fg);
+    if (d.ty) {
+      // 类型：盘名后一道 45° 斜线分隔，再接类型名；固态为冷色，机械盘为标记色
+      ctx.font = `600 11px ${F.ui}`;
+      const tx = xb + 18 + ctx.measureText(d.n).width, col = hdd ? C.mark : C.cool;
+      seg(tx, y - 4, tx + 7, y - 14, col, 1.25);
+      txt(d.ty, tx + 11, y - 9, `9px ${F.mono}`, col);
+    }
+    txt(d.u == null || !d.t ? '--' : pct(d.u / d.t), xa - (x0 - LANE.x1) * .54 - 8, y - 9, `10px ${F.mono}`, C.dim, 'right');
+    if (d.u == null || d.t == null) glitchText('NO SIGNAL', xb + 12, y + 10, `10px ${F.mono}`);
+    else txt(`${d.u.toFixed(0)} / ${d.t.toFixed(0)} GB`, xb + 12, y + 10, `10px ${F.mono}`, C.dim);
+    // 第三行：SSD 剩余寿命（按高低着色）· 通电时间 · 累计写入；SSD 拿不到寿命时显示 NO SIGNAL
+    const h = d.h || {}, extra = [];
+    if (h.powerOnHours != null) extra.push(`${(h.powerOnHours / 1000).toFixed(1)}k h`);
+    if (h.tbw != null) extra.push(`${h.tbw.toFixed(1)} TBW`);
+    let lx = xb + 12;
+    if (!hdd) {
+      if (h.lifeUsed == null) { glitchText('LIFE NO SIGNAL', lx, y + 23, `9px ${F.mono}`); lx += 92; }
+      else {
+        const left = 100 - h.lifeUsed, s1 = `LIFE ${left.toFixed(0)}%`;
+        txt(s1, lx, y + 23, `9px ${F.mono}`, left > 50 ? C.cool : left > 20 ? C.mark : C.hot);
+        ctx.font = `9px ${F.mono}`; lx += ctx.measureText(s1).width + 10;
+      }
+    }
+    if (extra.length) txt(extra.join(' · '), lx, y + 23, `9px ${F.mono}`, C.dim, 'left', .8);
+    if (d.busy != null) txt(`BUSY ${d.busy.toFixed(0)}%`, xa - 80, y + 23, `9px ${F.mono}`, d.busy >= 90 ? C.heat : d.busy >= 60 ? C.mark : C.dim);
+    txt(`R ${rateS(io[0])}`, xa - 150, y + 10, `10px ${F.mono}`, C.cool);
+    txt(`W ${rateS(io[1])}`, xa - 80, y + 10, `10px ${F.mono}`, C.fg, 'left', .7);
+  });
+  const ex = Math.min(60, EL + 60);
+  seg(LANE.x1, y0, ex, y0, C.hot, 2.5);
+  dot(ex, y0, 4.5, C.fg);
+}
+
+// 装饰线：括号与支腿。支腿从透镜下缘外侧斜穿龙骨，落到内存总线端头，再折向屏幕底边，把内存区框成梯形
+// top 在斜边延长线上、透镜尖端下方留出一段空隙，避免和过渡弧贴在一起；bus 是同一直线与内存总线高度的交点
+// end 沿同一方向（dx:dy = -30:46）延伸到屏幕底边以下，整条支腿是一根直线
+const LEG = { top: { x: 803, y: 566 }, bus: { x: 600, y: 878 }, end: { x: 455, y: 1100 } };
+function decor() {
+  ctx.globalAlpha = .9;
+  for (const k of [0, 1]) {
+    const sx = k ? -1 : 1, mx = (x) => k ? 1920 - x : x;
+    // 括号
+    stroke(G.brk[k], 0, 1, C.line, 1.25);
+    for (const q of [G.brk[k].at(0), G.brk[k].at(1)]) dot(q.x, q.y, 1.8, C.dim);
+    ctx.strokeStyle = C.line; ctx.lineWidth = 1; ctx.beginPath();
+    for (let y = 500, i = 0; y <= 580; y += 8, i++) {
+      if (Math.abs(y - 540) < 6) continue;
+      const len = i % 5 === 0 ? 8 : 4;
+      ctx.moveTo(mx(676), y); ctx.lineTo(mx(676) + sx * len, y);
+    }
+    ctx.stroke();
+    ring(mx(676), 540, 3, C.dim, 1);
+
+    // 支腿
+    const t = LEG.top, b = LEG.bus, e = LEG.end;
+    // 上段从透镜斜边的亮色渐变到普通线色，读起来是那段实线的延长
+    const gr = ctx.createLinearGradient(mx(t.x), t.y, mx(b.x), b.y);
+    gr.addColorStop(0, C.fg); gr.addColorStop(.45, C.line);
+    seg(mx(t.x), t.y, mx(b.x), b.y, gr, 1.5);
+    seg(mx(b.x), b.y, mx(e.x), e.y, C.line, 1.25);
+    // 与龙骨水平段的交点
+    const ky = 800, kx = t.x + (b.x - t.x) * (ky - t.y) / (b.y - t.y);
+    ring(mx(kx), ky, 3, C.dim, 1);
+    // 接到内存总线端头
+    seg(mx(b.x), b.y, mx(k ? MB.x1 : MB.x0), b.y, C.line, 1);
+    dot(mx(b.x), b.y, 2.5, C.fg);
+    // 下段刻度：垂直于支腿，越往下越淡
+    const dx = e.x - b.x, dy = e.y - b.y, L = Math.hypot(dx, dy), ux = dx / L, uy = dy / L;
+    ctx.beginPath();
+    for (let d = 18, i = 0; d < L - 10; d += 14, i++) {
+      const x = b.x + ux * d, y = b.y + uy * d, len = i % 4 === 0 ? 9 : 4;
+      ctx.globalAlpha = .9 * (1 - d / L);
+      ctx.strokeStyle = C.line; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(mx(x), y); ctx.lineTo(mx(x + uy * len), y - ux * len); ctx.stroke();
+    }
+    ctx.globalAlpha = .9;
+  }
+  ctx.globalAlpha = 1;
+}
+
+// 时间轨：左侧地平线是“今天”，右侧是“今年”，都从屏幕外缘（起点）流向中心（终点）。
+// 已过去的部分为实线，刻度为小时 / 月份；标记沿线移动，下方跟着时间或日期，以及已过去的百分比。
+const WEEK = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
+const MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+const pad2 = (n) => String(n).padStart(2, '0');
+function timeTrack(P, k) {
+  const d = new Date();
+  let f, ticks, main, sub;
+  if (k === 0) {
+    f = (d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds() + d.getMilliseconds() / 1000) / 86400;
+    ticks = Array.from({ length: 25 }, (_, i) => [i / 24, i % 6 === 0 && i < 24 ? pad2(i) : null, i % 6 === 0]);
+    main = `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+    sub = `DAY ${(f * 100).toFixed(2)}%`;
+  } else {
+    const y = d.getFullYear(), a = new Date(y, 0, 1), b = new Date(y + 1, 0, 1), len = b - a;
+    f = (d - a) / len;
+    ticks = Array.from({ length: 13 }, (_, m) => [(new Date(y, m, 1) - a) / len, m < 12 ? MONTHS[m] : null, true]);
+    main = `${y}.${pad2(d.getMonth() + 1)}.${pad2(d.getDate())} ${WEEK[d.getDay()]}`;
+    sub = `YEAR ${(f * 100).toFixed(4)}% · D${Math.floor((d - a) / 864e5) + 1}`;
+  }
+  const at = (x) => P.at(1 - x);
+  // 已过去的部分
+  ctx.globalAlpha = .6; stroke(P, 1 - f, 1, C.fg, 1.5); ctx.globalAlpha = 1;
+  // 刻度
+  ctx.strokeStyle = C.line; ctx.lineWidth = 1; ctx.beginPath();
+  for (const [x, , major] of ticks) { const q = at(x); ctx.moveTo(q.x, q.y + 3); ctx.lineTo(q.x, q.y + (major ? 9 : 5)); }
+  ctx.stroke();
+  // 标签与读数都对齐到地平线主线（y = 556），不随线头处的小台阶上下浮动
+  const baseY = 556;
+  for (const [x, lab] of ticks) if (lab) { const q = at(x); txt(lab, q.x + (k ? -2 : 2), baseY + 16, `8px ${F.mono}`, C.dim, k ? 'right' : 'left', .8); }
+  // 标记与读数
+  const q = at(f), pulse = .5 + .5 * Math.sin(performance.now() / 400);
+  seg(q.x, q.y - 6, q.x, baseY + 28, C.mark, 1);
+  dot(q.x, q.y, 2.5, C.mark);
+  ctx.globalAlpha = .3 + .5 * pulse; ring(q.x, q.y, 6, C.mark, 1); ctx.globalAlpha = 1;
+  // 读数优先放在标记外侧（远离中心），外侧放不下时放到内侧
+  ctx.font = `15px ${F.mono}`;
+  const tw = Math.max(ctx.measureText(main).width, 120), out = k ? 1 : -1, edge = k ? ER - 70 : EL + 70;
+  const fitsOut = k ? q.x + 10 + tw <= edge : q.x - 10 - tw >= edge;
+  const side = fitsOut ? out : -out, tx = q.x + side * 10, al = side > 0 ? 'left' : 'right';
+  txt(main, tx, baseY + 40, `15px ${F.mono}`, C.fg, al);
+  txt(sub, tx, baseY + 56, `9px ${F.mono}`, C.cool, al);
+}
+function horizon(k, now) {
+  const P = G.H[k];
+  ctx.setLineDash([2, 7]); stroke(P, 0, 1, C.line, 1.25); ctx.setLineDash([]);
+  timeTrack(P, k);
+  onPath(P, uAtX(P, k ? 1530 : 100), 14, (dir) => drawLog(k ? logs.io : logs.sys, 0, dir, now, k ? -12 : 12));
+}
+
+// 读数步进：每 STEP.every 秒取一次目标并取整，用固定时长的非线性动画滚过去，其余时间停在整数上
+const STEP = { every: 1, dur: .45 };
+const steppers = {};
+const inOutQuint = (x) => x < .5 ? 16 * x ** 5 : 1 - Math.pow(-2 * x + 2, 5) / 2;
+const stepVal = (st, now) => st.from + (st.to - st.from) * inOutQuint(clamp01((now - st.t0) / STEP.dur));
+function stepped(key, target, now) {
+  if (target == null) { delete steppers[key]; return null; }
+  let st = steppers[key];
+  if (!st) st = steppers[key] = { from: Math.round(target), to: Math.round(target), t0: now, next: now + STEP.every };
+  if (now >= st.next) { st.from = stepVal(st, now); st.to = Math.round(target); st.t0 = now; st.next = now + STEP.every; }
+  return stepVal(st, now);
+}
+let status = 'NO SIGNAL', statusCand = 'NO SIGNAL', statusSince = 0;
+function core(t, now) {
+  // 透镜：上缘 = 内存，从两端向中间填充
+  const mf = S.mem == null || !D.mem.t ? null : Math.min(1, S.mem / D.mem.t);
+  stroke(G.lensT, 0, 1, C.line, 3);
+  if (mf != null) {
+    const mc = ALERTS.mem.on ? C.alt : mf > .85 ? C.hot : C.fg;
+    stroke(G.lensT, 0, mf / 2, mc, 3);
+    stroke(G.lensT, 1 - mf / 2, 1, mc, 3);
+    for (const u of [mf / 2, 1 - mf / 2]) { const q = G.lensT.at(u); dot(q.x, q.y, 3, C.mark); }
+  }
+
+  // 总体状态：只看有数据的项；三项都没有数据时为 NO SIGNAL
+  const known = [S.cpu, S.gpu, mf].filter(v => v != null);
+  const peak = known.length ? Math.max(...known) : null;
+  const cand = peak == null ? 'NO SIGNAL' : peak < .6 ? 'NOMINAL' : peak < .85 ? 'ELEVATED' : 'CRITICAL';
+  if (cand !== statusCand) { statusCand = cand; statusSince = now; }
+  if (statusCand !== status && now - statusSince > 1.5) { status = statusCand; if (status !== 'NO SIGNAL') sfx.status(status); }
+  // 三项核心读数并列：CPU / MEM / GPU，各带一行细节
+  const memPct = D.mem.u == null || !D.mem.t ? null : D.mem.u / D.mem.t * 100;
+  const triad = [
+    [886, 'CPU', stepped('cpu', D.cpu.u == null ? null : D.cpu.u * 100, now), D.cpu.f == null ? null : `${D.cpu.f.toFixed(2)} GHz`],
+    [960, 'MEM', stepped('mem', memPct, now), memPct == null ? null : `${D.mem.u.toFixed(1)} / ${D.mem.t.toFixed(0)} GB`],
+    [1034, 'GPU', stepped('gpu', D.gpu.u == null ? null : D.gpu.u * 100, now), D.gpu.t == null ? null : `${D.gpu.t.toFixed(0)}°C`],
+  ];
+  for (const [x, label, v, sub] of triad) {
+    const ak = label.toLowerCase(), al = ALERTS[ak].on, acol = al ? ALERT_DEF[ak].color() : null;
+    txt(label, x, 509, `600 8px ${F.ui}`, al ? acol : C.dim, 'center', 1, 3);
+    if (al) {
+      // 告警：数字四角的方括号随呼吸闪动
+      ctx.globalAlpha = .45 + .45 * Math.sin(now * 6);
+      ctx.strokeStyle = acol; ctx.lineWidth = 1.25; ctx.beginPath();
+      for (const [sx, sy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+        const cx = x + sx * 30, cy = 535 + sy * 17;
+        ctx.moveTo(cx, cy - sy * 6); ctx.lineTo(cx, cy); ctx.lineTo(cx - sx * 6, cy);
+      }
+      ctx.stroke(); ctx.globalAlpha = 1;
+    }
+    if (v == null) glitchText('--', x, 535, `22px ${F.mono}`, 'center');
+    else odo(x, 535, v, 3, 0, 24, al ? acol : v >= 85 ? C.hot : C.fg, 'center', false);
+    if (sub == null) glitchText('NO SIG', x, 559, `9px ${F.mono}`, 'center');
+    else txt(sub, x, 559, `9px ${F.mono}`, C.dim, 'center');
+  }
+  // 总体状态：小字放在透镜下方
+  // 状态行：圆点 + 文字作为一个整体，按实际宽度居中在中轴上
+  const statusLine = (msg, col, a, glitch) => {
+    ctx.font = `10px ${F.disp}`; ctx.letterSpacing = '1px';
+    const w = ctx.measureText(msg).width; ctx.letterSpacing = '0px';
+    const x0 = 960 - (w + 12) / 2;
+    dot(x0 + 3, 582, 3, col);
+    if (glitch) glitchText(msg, x0 + 12, 582, `10px ${F.disp}`);
+    else txt(msg, x0 + 12, 582, `10px ${F.disp}`, col, 'left', a, 1);
+  };
+  const act = activeAlerts();
+  if (act.length) {
+    // 告警优先：同一时间只显示一条，后面用 +N 提示还有几条，每 2.5 秒轮换；整体闪烁
+    const k = currentAlert(now);
+    statusLine(ALERT_DEF[k].label + (act.length > 1 ? `  +${act.length - 1}` : ''), ALERT_DEF[k].color(), .55 + .45 * (Math.sin(now * 7) > -.3 ? 1 : 0));
+  } else {
+    const stCol = status === 'NO SIGNAL' || status === 'CRITICAL' ? C.hot : status === 'ELEVATED' ? C.mark : C.cool;
+    statusLine(status === 'NO SIGNAL' ? 'SYSTEM · NO SIGNAL' : `SYSTEM ${status}`, stCol, 1, status === 'NO SIGNAL');
+  }
+
+  // 中轴
+  seg(960, 486, 960, 290, C.line, 1.25);
+  ring(960, 280, 4, C.fg, 1.25);
+  seg(960, 270, 960, 168, C.line, 1.25);
+  seg(950, 168, 970, 168, C.line, 1.25);
+  if (D.host) txt(D.host.toUpperCase(), 960, 124, `17px ${F.disp}`, C.fg, 'center', 1, 3);
+  else glitchText('NO SIGNAL', 960, 124, `17px ${F.disp}`, 'center');
+  // 状态行：数据源用一个点 + 词表达；离线时点为警示色并缓慢呼吸
+  const live = src === 'LINK' || src === 'LIVELY' || src === 'SIM';
+  const word = src === 'LINK' ? 'LIVE' : src === 'LIVELY' ? 'LIVELY' : src === 'SIM' ? 'DEMO' : 'OFFLINE';
+  const pw = D.power, bat = pw && pw.battery;
+  const power = !pw ? 'PWR NO SIGNAL'
+    : bat ? `BAT ${bat.percent}%${bat.charging ? ' CHG' : ''}${bat.remainingMin != null && !bat.charging ? ` ${Math.floor(bat.remainingMin / 60)}h${String(bat.remainingMin % 60).padStart(2, '0')}` : ''}${pw.ac ? ' · AC' : ''}`
+    : pw.ac === false ? 'ON BATTERY' : 'AC POWER';
+  // 电源计划 / Windows 11 电源模式：数据源提供时附在电源后面
+  const MODE = { 'best-efficiency': 'EFFICIENCY', balanced: 'BALANCED', 'best-performance': 'PERFORMANCE' };
+  const plan = pw && [...new Set([pw.plan ? String(pw.plan).toUpperCase() : null, MODE[pw.mode]].filter(Boolean))].join(' / ') || null;
+  const line = live ? `${word}   ·   UP ${D.up == null ? '--' : clock(D.up)}   ·   ${power}${plan ? '   ·   ' + plan : ''}`
+    : src === 'SIM' ? `${word}   ·   演示数据` : `${word}   ·   未连接数据服务`;
+  ctx.font = `11px ${F.mono}`;
+  const lw = ctx.measureText(line).width, lx = 960 - lw / 2 + 6, dc = live ? C.cool : src === 'SIM' ? C.mark : C.hot;
+  dot(lx - 10, 150, 3, dc);
+  if (!live) { ctx.globalAlpha = .35 + .35 * Math.sin(t * 2.5); ring(lx - 10, 150, 6, dc, 1); ctx.globalAlpha = 1; }
+  txt(line, lx, 150, `11px ${F.mono}`, live ? C.dim : dc);
+
+  seg(960, 600, 960, 790, C.line, 1.25);
+  ring(960, 800, 4, C.fg, 1.25);
+
+  // 准星环：虚线旋转
+  ctx.save(); ctx.translate(960, 280); ctx.rotate(t * .4);
+  ctx.setLineDash([3, 7]); ring(0, 0, 14, alpha(C.dim, .6), 1); ctx.setLineDash([]);
+  ctx.restore();
+}
+
+function keel() {
+  const P = G.keel;
+  stroke(P, .03, .485, C.line, 1.25);
+  stroke(P, .515, .97, C.line, 1.25);
+  // 网络示波：中间是最新，向两侧流出；下行在内侧，上行在外侧
+  const mx = S.scopeMax, half = .44;
+  const wave = (buf, amp, color, hot) => {
+    ctx.strokeStyle = color; ctx.lineWidth = hot ? 3 : 1.5; ctx.beginPath();
+    for (let i = 0; i <= 2 * (HIST - 1); i++) {
+      const side = i < HIST ? -1 : 1, k = side < 0 ? HIST - 1 - i : i - (HIST - 1);
+      const v = buf[(histHead - 1 - k + HIST * 2) % HIST], q = P.at(.5 + side * half * k / (HIST - 1));
+      const d = Math.min(1, v / mx) * amp * Math.sin(Math.PI * (.5 + .5 * (1 - k / (HIST - 1))));
+      const x = q.x + q.nx * d, y = q.y + q.ny * d;
+      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    }
+    ctx.stroke();
+  };
+  wave(netDn, -24, C.cool, ALERTS.dl.on);
+  wave(netUp, 16, C.hot, ALERTS.ul.on);
+  if (S.dn == null) noSigLabel(P, .3, 22, '↓ NO SIGNAL', 6);
+  else pathLabel(P, .3, 22, `↓ ${rate(S.dn)}`, `${ALERTS.dl.on ? 600 : 400} 12px ${F.mono}`, ALERTS.dl.on ? ALERT_DEF.dl.color() : C.cool, ALERTS.dl.on ? flicker(performance.now() / 1000) : 1);
+  if (S.up == null) noSigLabel(P, .7, 22, '↑ NO SIGNAL', 7);
+  else pathLabel(P, .7, 22, `↑ ${rate(S.up)}`, `${ALERTS.ul.on ? 600 : 400} 12px ${F.mono}`, ALERTS.ul.on ? ALERT_DEF.ul.color() : C.hot, ALERTS.ul.on ? flicker(performance.now() / 1000 + 1) : 1);
+  pathLabel(P, .5, 34, 'NETWORK', `600 9px ${F.ui}`, C.dim, 1, 3);
+}
+
+// 区域读数：由翼线、冠线 / 龙骨与中轴围出的四个格子，各有一根引线连回所属的翼线
+// 引线：从进度条格子外侧垂直伸出一小段，再水平走到标签。沿进度条搜索落点，让垂直段长度最接近 stub 且转折点恰好与标签同高
+function leader(x, y, P, off, ua = U.s0, ub = U.s1, stub = 22) {
+  const sg = Math.sign(off), d0 = Math.abs(off);
+  let best = null;
+  for (let i = 0; i <= 60; i++) {
+    const q = P.at(ua + (ub - ua) * i / 60), nx = q.nx * sg, ny = q.ny * sg;
+    if (Math.abs(ny) < .1) continue;
+    const bx = q.x + nx * d0, by = q.y + ny * d0, d = (y - by) / ny;
+    if (d < 8) continue;
+    const score = Math.abs(d - stub);
+    if (!best || score < best.score) best = { score, bx, by, ex: bx + nx * d, ey: y };
+  }
+  if (!best) return;
+  ctx.strokeStyle = alpha(C.dim, .6); ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(best.bx, best.by); ctx.lineTo(best.ex, best.ey); ctx.lineTo(x, y); ctx.stroke();
+  dot(best.bx, best.by, 2, C.dim);
+}
+// 硬件名称去掉商标符号、代号前缀和频率后缀，例如 "12th Gen Intel(R) Core(TM) i9-12900K" → "Intel Core i9-12900K"
+const cleanName = (n) => String(n || '')
+  .replace(/\((R|TM|C)\)|[®™]/gi, '')
+  .replace(/\d+(st|nd|rd|th) Gen/i, '')
+  .replace(/\s+(CPU|Processor).*$/i, '')
+  .replace(/\s+\d+-Core.*$/i, '')
+  .replace(/\s+/g, ' ').trim();
+// 规格表：坐在冠线水平段上方，用一根短竖线挂到冠线上；CPU 在左、GPU 在右镜像排版
+function specBlock(k) {
+  const sp = (k ? D.gpu.spec : D.cpu.spec) || {};
+  const rows = (k ? [
+    ['VRAM', D.gpu.vt == null ? null : `${D.gpu.vt.toFixed(0)} GB${sp.memType ? ' ' + sp.memType : ''}${sp.busWidth ? ' / ' + sp.busWidth + '-bit' : ''}`],
+    ['BOOST', sp.boostClock ? `${sp.boostClock.toFixed(2)} GHz` : null],
+    ['TBP', sp.tdp ? `${sp.tdp} W` : null],
+    ['DRIVER', sp.driver || null],
+  ] : [
+    ['CORES', sp.pCores != null ? `${sp.pCores}P + ${sp.eCores || 0}E / ${sp.threads}T` : sp.threads ? `${sp.threads} threads` : null],
+    ['CLOCK', sp.baseClock && sp.boostClock ? `${sp.baseClock.toFixed(2)} – ${sp.boostClock.toFixed(2)} GHz` : null],
+    ['CACHE', sp.cacheMB ? `${sp.cacheMB} MB L3` : null],
+    ['TDP', sp.tdp ? `${sp.tdp} W` : null],
+  ]).filter(r => r[1]);
+  // 表格宽 210：外侧列是键，内侧列是值；内侧再留 12px 给挂线，挂线和表头横线组成一个直角支架落到冠线上
+  const sx = k ? 1 : -1, hang = 960 + sx * 30, inner = hang + sx * 12, outer = inner + sx * 210;
+  const ia = k ? 'left' : 'right', oa = k ? 'right' : 'left';
+  const raw = k ? D.gpu.name : D.cpu.name, name = cleanName(raw).toUpperCase().slice(0, 30);
+  const rowH = 16, y0 = 280 - 22 - (Math.max(1, rows.length) - 1) * rowH;
+  if (raw) txt(name, inner, y0 - 30, `600 13px ${F.ui}`, C.fg, ia, 1, 1);
+  else glitchText(`${k ? 'GPU' : 'CPU'} · NO SIGNAL`, inner, y0 - 30, `600 13px ${F.ui}`, ia);
+  seg(outer, y0 - 15, hang, y0 - 15, C.line, 1);
+  ctx.textBaseline = 'alphabetic';
+  rows.forEach(([key, val], i) => {
+    const y = y0 + i * rowH + 4;
+    txt(key, outer, y, `600 9px ${F.ui}`, C.dim, oa, 1, 2);
+    txt(val, inner, y, `11px ${F.mono}`, C.fg, ia, .85);
+  });
+  ctx.textBaseline = 'middle';
+  seg(hang, y0 - 15, hang, 276, C.line, 1);
+  dot(hang, 280, 2.5, C.dim);
+}
+// 路径上最接近给定 x 的位置（用于日志等左对齐元素在单调折线上的定位）
+function uAtX(P, x) {
+  let best = 0, bd = Infinity;
+  for (let i = 0; i < P.p.length; i++) {
+    const d = Math.abs(P.p[i].x - x);
+    if (d < bd) { bd = d; best = i; }
+  }
+  return P.cum[best] / P.len;
+}
+
+// 内存总线：中轴从龙骨节点继续向下，落到一条水平总线上。总线本身是内存构成条，上方是图例，下方按插槽挂出内存条卡片（含空槽位）
+const MB = { x0: 640, x1: 1280, y: 878 };
+const gb = (v) => `${v.toFixed(1)} GB`;
+function fit(str, maxW) {
+  if (ctx.measureText(str).width <= maxW) return str;
+  while (str.length > 1 && ctx.measureText(str + '…').width > maxW) str = str.slice(0, -1);
+  return str + '…';
+}
+// 图例：两端对齐，第一项从总线左端开始，最后一项止于总线右端；同一行的文字按字母基线对齐
+function legend(items) {
+  const parts = items.map(([l, v, c]) => {
+    ctx.font = `600 9px ${F.ui}`; ctx.letterSpacing = '1.5px'; const lw = ctx.measureText(l).width; ctx.letterSpacing = '0px';
+    ctx.font = `11px ${F.mono}`; const vw = ctx.measureText(v).width;
+    return { l, v, c, lw, w: 16 + lw + vw };
+  });
+  const used = parts.reduce((a, q) => a + q.w, 0);
+  const gap = parts.length > 1 ? (MB.x1 - MB.x0 - used) / (parts.length - 1) : 0;
+  const base = MB.y - 15;
+  let cx = MB.x0;
+  ctx.textBaseline = 'alphabetic';
+  for (const q of parts) {
+    ctx.fillStyle = q.c; ctx.fillRect(cx, base - 6, 6, 6);
+    txt(q.l, cx + 10, base, `600 9px ${F.ui}`, C.dim, 'left', 1, 1.5);
+    txt(q.v, cx + 16 + q.lw, base, `11px ${F.mono}`, C.fg);
+    cx += q.w + gap;
+  }
+  ctx.textBaseline = 'middle';
+}
+// 内存条：不画外框，顶部一根标题线，下面四行文字；每行内左右两侧共用一条基线
+function dimm(x, y, w, mod) {
+  const l = x, r = x + w, rows = [y + 15, y + 34, y + 49, y + 62];
+  ctx.textBaseline = 'alphabetic';
+  if (!mod) {
+    ctx.setLineDash([3, 4]); seg(l, y, r, y, C.line, 1); ctx.setLineDash([]);
+    txt('EMPTY SLOT', l, rows[0], `600 9px ${F.ui}`, C.dim, 'left', .7, 2);
+    ctx.textBaseline = 'middle';
+    return;
+  }
+  seg(l, y, r, y, C.line, 1);
+  seg(r, y - 3, r, y + 3, C.dim, 1);
+  const ok = !mod.status || /^ok$/i.test(mod.status), sc = ok ? C.cool : C.hot;
+  // "Controller0-DIMMA1" → "DIMM A1"
+  const slot = String(mod.slot || mod.bank || 'DIMM').replace(/^.*?-(?=DIMM)/i, '').replace(/^(DIMM)_?([A-Z]\d+)$/i, '$1 $2');
+  txt(slot.toUpperCase(), l, rows[0], `600 9px ${F.ui}`, C.dim, 'left', 1, 1.5);
+  const st = ok ? 'OK' : String(mod.status).toUpperCase().slice(0, 8);
+  ctx.font = `9px ${F.mono}`;
+  dot(r - ctx.measureText(st).width - 7, rows[0] - 3, 2.5, sc);
+  txt(st, r, rows[0], `9px ${F.mono}`, sc, 'right');
+  txt(`${mod.capacity} GB`, l, rows[1], `17px ${F.mono}`, C.fg);
+  const spd = mod.type ? `${mod.type}${mod.speed ? '-' + mod.speed : ''}` : mod.speed ? `${mod.speed} MT/s` : '';
+  txt(spd, r, rows[1], `10px ${F.mono}`, C.mark, 'right');
+  ctx.font = `10px ${F.ui}`;
+  txt(fit([mod.manufacturer, mod.partNumber].filter(Boolean).join(' '), w), l, rows[2], `10px ${F.ui}`, C.fg, 'left', .85);
+  const tail = [mod.configuredSpeed && mod.configuredSpeed !== mod.speed ? `@${mod.configuredSpeed}` : '', mod.voltage ? `${(+mod.voltage).toFixed(2)}V` : ''].filter(Boolean).join(' ');
+  ctx.font = `9px ${F.mono}`;
+  const tw = tail ? ctx.measureText(tail).width + 8 : 0;
+  txt(fit(`SN ${mod.serial || '—'}`, w - tw), l, rows[3], `9px ${F.mono}`, C.dim);
+  if (tail) txt(tail, r, rows[3], `9px ${F.mono}`, C.dim, 'right');
+  ctx.textBaseline = 'middle';
+}
+function memPanel() {
+  const m = D.mem, W = MB.x1 - MB.x0;
+  seg(960, 810, 960, 822, C.line, 1.25);
+  seg(960, 846, 960, MB.y - 5, C.line, 1.25);
+  if (!m.t || S.mem == null) {
+    // 无信号：虚线总线 + 一段亮块来回扫过
+    const now = performance.now() / 1000, f = Math.sin(now * 1.6) * .5 + .5;
+    ctx.setLineDash([6, 5]); seg(MB.x0, MB.y, MB.x1, MB.y, C.hot, 2); ctx.setLineDash([]);
+    ctx.fillStyle = C.hot; ctx.globalAlpha = .8; ctx.fillRect(MB.x0 + (W - 60) * f, MB.y - 3, 60, 6); ctx.globalAlpha = 1;
+    glitchText('MEMORY · NO SIGNAL', MB.x0, MB.y - 18, `600 10px ${F.ui}`);
+    return;
+  }
+  const T = m.t, sc = W / T;
+
+  // 构成条：使用中 | 已缓存 | 空闲
+  const used = Math.min(T, S.mem), cached = Math.min(T - used, S.mcache ?? 0), free = Math.max(0, T - used - cached);
+  let x = MB.x0;
+  const part = (v, color, a) => {
+    const w = v * sc;
+    if (w > 2) { ctx.globalAlpha = a; ctx.fillStyle = color; ctx.fillRect(x, MB.y - 3, w - 2, 6); ctx.globalAlpha = 1; }
+    x += w;
+  };
+  part(used, C.fg, 1); part(cached, C.cool, .75); part(free, C.dim, .3);
+  // 提交量：总线下方的细线，相对提交上限
+  if (m.cl && S.mcommit != null) {
+    ctx.fillStyle = C.mark; ctx.globalAlpha = .25; ctx.fillRect(MB.x0, MB.y + 6, W, 1.5);
+    ctx.globalAlpha = 1; ctx.fillRect(MB.x0, MB.y + 6, W * Math.min(1, S.mcommit / m.cl), 1.5);
+  }
+  const left = [['IN USE', gb(S.mem), C.fg]];
+  if (S.mcache != null) left.push(['CACHED', gb(S.mcache), C.cool]);
+  if (m.comp != null) left.push(['COMPRESSED', gb(m.comp), C.dim]);
+  const right = [['AVAILABLE', gb(m.avail ?? T - S.mem), C.dim]];
+  if (m.cl && S.mcommit != null) right.push(['COMMIT', `${S.mcommit.toFixed(1)} / ${m.cl.toFixed(1)} GB`, C.mark]);
+  legend([...left, ...right]);
+
+  // 内存条卡片：已插的按插槽名排序，空槽位排在后面
+  const mods = [...(m.mods || [])].sort((a, b) => String(a.slot).localeCompare(String(b.slot)));
+  const n = Math.max(m.slots || 0, mods.length);
+  if (!n) { glitchText('MODULES · NO SIGNAL', MB.x0, MB.y + 30, `600 10px ${F.ui}`); return; }
+  // 各列平分总线宽度，首尾两列的边缘与总线两端对齐
+  // 槽位按物理顺序排开（A1 A2 B1 B2 …）。双通道下同序号的槽位成对安装（1-3、2-4），
+  // 每一对挂在一条子总线上；优先安装的一对（各通道最后一个序号，如 A2/B2）离主总线最近。
+  const perCh = n % 2 === 0 && n >= 4 ? n / 2 : n;
+  const pos = (mod, i) => {
+    const m = String(mod.slot || '').match(/([A-H])_?(\d+)\s*$/i);
+    if (!m) return i;
+    const p = (m[1].toUpperCase().charCodeAt(0) - 65) * perCh + (+m[2] - 1);
+    return p >= 0 && p < n ? p : i;
+  };
+  const slots = new Array(n).fill(null);
+  mods.forEach((mod, i) => { let p = pos(mod, i); while (slots[p] !== null && p < n - 1) p++; slots[p] = mod; });
+  // 落点以中轴为中心左右对称，中间多留一段空隙；左半边的信息块向左下斜，右半边向右下斜
+  const top = 906, groups = [];
+  for (let k = perCh - 1; k >= 0; k--) {
+    const ps = []; for (let p = k; p < n; p += perCh) ps.push(p);
+    groups.push(ps);
+  }
+  // 每一对放在同一侧：优先安装的一对（如 2-4）在右，另一对（1-3）在左；多于两对时左右交替向外排。
+  // 落点贴向两侧支腿，中间留给中轴；左侧小号在外，右侧小号在内（读起来是 1 3 | 2 4）
+  const xmap = {}, sides = [[], []];
+  groups.forEach((ps, gi) => sides[gi % 2 === 0 ? 1 : 0].push(...ps));
+  sides[0].sort((a, b) => a - b).forEach((p, j) => { xmap[p] = 650 + j * 110; });
+  sides[1].sort((a, b) => a - b).forEach((p, j) => { xmap[p] = 1160 + j * 110; });
+  const sx = (p) => xmap[p];
+  const gy = (gi) => MB.y + 16 + gi * 12;
+  groups.forEach((ps, gi) => {
+    const y = gy(gi), a = sx(ps[0]), b = sx(ps[ps.length - 1]);
+    // 子总线从主总线在其左端引下
+    seg(a, MB.y + 9, a, y, C.line, 1); dot(a, MB.y + 9, 2, C.dim);
+    if (b > a) seg(a, y, b, y, C.line, 1);
+    if (ps.length > 1) txt(ps.map(p => p + 1).join('·'), b + 8, y + .5, `9px ${F.mono}`, C.dim);
+    ps.forEach((p) => {
+      const x = sx(p), mod = slots[p];
+      // 落线：与更下层子总线交叉的位置留跨线断口
+      const cuts = groups.map((q, gj) => gj > gi && sx(q[0]) < x && sx(q[q.length - 1]) > x ? gy(gj) : null).filter(v => v != null);
+      if (!mod) ctx.setLineDash([2, 3]);
+      let y0 = y;
+      for (const c of cuts) { seg(x, y0, x, c - 4, C.line, 1); y0 = c + 4; }
+      seg(x, y0, x, top, C.line, 1);
+      ctx.setLineDash([]);
+      dot(x, y, 2, mod ? C.fg : C.line);
+      // 信息块与两侧支腿平行（支腿斜率 dx:dy = 30:46）：右半边从落点向右下展开；左半边镜像向左下展开
+      // （文字仍从左往右读，落点在标题线右端）
+      const left = x < 960, ang = Math.atan2(46, 30);
+      ctx.save(); ctx.translate(x, top); ctx.rotate(left ? -ang : ang);
+      dimm(left ? -150 : 0, 0, 150, mod);
+      ctx.restore();
+    });
+  });
+}
+// 占用历史：每秒一个采样，缺数据记 NaN。CPU 最新在右（靠中轴），GPU 镜像为最新在左
+const LOADN = 60, cpuHist = new Float32Array(LOADN).fill(NaN), gpuHist = new Float32Array(LOADN).fill(NaN);
+let loadHead = 0, loadAcc = 0;
+// 外形是由旧到新逐渐增高的楔形（与负载条“由细到粗”呼应）；柱子由斜切小格叠成，顶端连一条峰值折线，最新一根顶上有三角标记
+function loadChart(x0, y0, w, h, buf, mirror) {
+  const bw = w / LOADN, base = y0 + h, ch = 3, step = 5, dir = mirror ? -1 : 1, sk = 1.4 * dir;
+  const hmax = (i) => h * (.3 + .7 * i / (LOADN - 1));
+  const X = (i) => mirror ? x0 + w - (i + 1) * bw : x0 + i * bw;
+  const xo = mirror ? x0 + w : x0, xn = mirror ? x0 : x0 + w;   // 旧端 / 新端
+  // 楔形轮廓：实线底边、虚线斜顶、新端竖边
+  seg(xo, base + 2, xn, base + 2, C.line, 1);
+  seg(xn, base + 2, xn, base - h - 2, C.line, 1);
+  ctx.setLineDash([2, 4]); seg(xo, base - hmax(0), xn, base - h - 2, C.faint, 1); ctx.setLineDash([]);
+  seg(xo, base + 2, xo, base - hmax(0), C.faint, 1);
+  const tops = [];
+  for (let i = 0; i < LOADN; i++) {
+    const v = buf[(loadHead + i) % LOADN];
+    if (!isFinite(v)) continue;
+    const x = X(i), cells = Math.max(1, Math.floor(hmax(i) / step)), lit = Math.max(1, Math.round(v * cells));
+    ctx.fillStyle = v > .85 ? C.hot : C.cool;
+    ctx.globalAlpha = .2 + .8 * (i / LOADN);
+    ctx.beginPath();
+    for (let c = 0; c < lit; c++) {
+      const yb = base - c * step;
+      ctx.moveTo(x + .6, yb); ctx.lineTo(x + bw - .6, yb); ctx.lineTo(x + bw - .6 + sk, yb - ch); ctx.lineTo(x + .6 + sk, yb - ch); ctx.closePath();
+    }
+    ctx.fill();
+    tops.push([x + bw / 2 + sk / 2, base - lit * step + 1, i]);
+  }
+  ctx.globalAlpha = 1;
+  if (tops.length) {
+    // 峰值折线
+    ctx.strokeStyle = C.cool; ctx.lineWidth = 1; ctx.globalAlpha = .7; ctx.beginPath();
+    tops.forEach(([x, y], j) => j ? ctx.lineTo(x, y) : ctx.moveTo(x, y));
+    ctx.stroke(); ctx.globalAlpha = 1;
+    // 最新值标记
+    const [tx, ty] = tops[tops.length - 1];
+    ctx.fillStyle = C.mark; ctx.beginPath(); ctx.moveTo(tx, ty - 3); ctx.lineTo(tx - 3, ty - 8); ctx.lineTo(tx + 3, ty - 8); ctx.closePath(); ctx.fill();
+  } else glitchText('NO SIGNAL', x0 + w / 2, y0 + h / 2, `12px ${F.mono}`, 'center');
+  txt('60s', xo, base + 12, `8px ${F.mono}`, C.dim, mirror ? 'right' : 'left', .7);
+}
+function cells() {
+  // CPU
+  leader(890, 338, G.A[0], 27);
+  dot(896, 338, 3.5, C.mark);
+  txt('CPU', 906, 339, `600 11px ${F.ui}`, C.fg, 'left', 1, 2);
+  loadChart(754, 364, 180, 66, cpuHist, false);
+  if (S.f == null) glitchText('CLK NO SIG', 934, 446, `11px ${F.mono}`, 'right');
+  else txt(`${S.f.toFixed(2)} GHz`, 934, 446, `12px ${F.mono}`, C.dim, 'right');
+  const pa = coreAvg('P'), ea = coreAvg('E');
+  if (ea != null && pa != null) {
+    txt(`P ${pct(pa)}`, 870, 464, `12px ${F.mono}`, C.cool, 'right');
+    txt(`E ${pct(ea)}`, 934, 464, `12px ${F.mono}`, C.fg, 'right', .6);
+  }
+  // GPU
+  leader(1030, 338, G.A[1], 27);
+  dot(1024, 338, 3.5, C.mark);
+  txt('GPU', 1014, 339, `600 11px ${F.ui}`, C.fg, 'right', 1, 2);
+  loadChart(986, 364, 180, 66, gpuHist, true);
+  if (S.gt == null) glitchText('NO SIG', 986, 446, `12px ${F.mono}`);
+  else txt(`${S.gt.toFixed(0)}°C`, 986, 446, `12px ${F.mono}`, C.dim);
+  if (D.gpu.power == null) glitchText('PWR NO SIG', 986, 464, `11px ${F.mono}`);
+  else txt(`${D.gpu.power.toFixed(0)} W`, 986, 464, `12px ${F.mono}`, C.cool);
+  if (D.gpu.clock != null) txt(`${D.gpu.clock.toFixed(2)} GHz`, 1050, 464, `12px ${F.mono}`, C.fg, 'left', .6);
+  // 存储
+  const [u, tt] = diskTotals();
+  leader(853, 646, G.B[0], -16);
+  dot(858, 646, 3, C.cool);
+  txt('STORAGE', 934, 647, `600 9px ${F.ui}`, C.dim, 'right', 1, 2);
+  if (tt == null) {
+    glitchText('NO SIGNAL', 934, 672, `16px ${F.mono}`, 'right');
+    txt('volume data offline', 934, 694, `10px ${F.ui}`, C.hot, 'right', .7, 1);
+  } else {
+    txt(`${(u / 1000).toFixed(2)} / ${(tt / 1000).toFixed(1)} TB`, 934, 672, `16px ${F.mono}`, C.fg, 'right');
+    if (ALERTS.disk.on && busiestDisk()) txt(`${busiestDisk().n} ${busiestDisk().busy.toFixed(0)}% busy`, 934, 694, `10px ${F.ui}`, C.fg, 'right', flicker(performance.now() / 1000 + 4), 1);
+    else txt(`${pct(u / tt)} allocated`, 934, 694, `10px ${F.ui}`, C.dim, 'right', 1, 1);
+  }
+  // 温度
+  const pk = peakTemp();
+  leader(1067, 646, G.B[1], -16);
+  dot(1062, 646, 3, C.cool);
+  txt('THERMAL', 986, 647, `600 9px ${F.ui}`, C.dim, 'left', 1, 2);
+  if (pk == null) {
+    glitchText('NO SIGNAL', 986, 672, `16px ${F.mono}`);
+    txt('sensor offline', 986, 694, `10px ${F.ui}`, C.hot, 'left', .7, 1);
+  } else {
+    const hotA = ALERTS.cput.on || ALERTS.gput.on;
+    txt(`${pk.toFixed(1)} °C`, 986, 672, `16px ${F.mono}`, hotA ? C.heat : pk >= 85 ? C.hot : pk >= 70 ? C.mark : C.fg, 'left', hotA ? flicker(performance.now() / 1000 + 2) : 1);
+    txt(`peak · ${thermal(pk)}`, 986, 694, `10px ${F.ui}`, C.dim, 'left', 1, 1);
+  }
+  // 功耗：只显示真实测量值，缺哪项就那项 NO SIG；不把 CPU + GPU 相加冒充整机功耗
+  ctx.textBaseline = 'alphabetic';
+  txt('POWER', 986, 716, `600 9px ${F.ui}`, C.dim, 'left', 1, 2);
+  const pw = D.power || {};
+  [['CPU', pw.cpuW], ['GPU', D.gpu.power], ['SYS', pw.systemW]].forEach(([k, v], i) => {
+    const x = 1040 + i * 62;
+    txt(k, x, 716, `600 8px ${F.ui}`, C.dim, 'left', 1, 1);
+    if (v == null) glitchText('--', x + 22, 716, `11px ${F.mono}`);
+    else txt(`${v.toFixed(0)}W`, x + 22, 716, `11px ${F.mono}`, k === 'SYS' ? C.fg : C.cool);
+  });
+  ctx.textBaseline = 'middle';
+}
+
+// ---------- post fx：辉光 / CRT 扫描线 / 曲面畸变 ----------
+// 2D 画布照常绘制，每帧作为纹理交给 WebGL2 做一次全屏后处理；不支持 WebGL2 或 ?fx=0 时直接显示 2D 画布。
+// 强度参数：?glow= ?scan= ?curve=（0 关闭，1 为默认强度的上限附近），WE 用户属性同名。
+function fxNum(k, d) { const v = params.get(k); return v == null ? d : +v; }
+const FX = { glow: fxNum('glow', .7), scan: fxNum('scan', .4), curve: fxNum('curve', .5) };
+function createFx() {
+  const c = document.createElement('canvas');
+  const gl = c.getContext('webgl2', { alpha: false, antialias: false, depth: false, stencil: false });
+  if (!gl) return null;
+  const vs = `#version 300 es
+in vec2 p; out vec2 v_uv;
+void main() { v_uv = p * .5 + .5; gl_Position = vec4(p, 0., 1.); }`;
+  const fs = `#version 300 es
+precision highp float;
+uniform sampler2D u_tex;
+uniform float u_t, u_glow, u_scan, u_curve, u_dpr;
+in vec2 v_uv; out vec4 o;
+void main() {
+  // 曲面畸变：中心内容缩小、向边缘逐渐拉伸；四边中点贴边，四角轻微裁切，不留黑边
+  vec2 c = v_uv * 2. - 1.;
+  float k = .1 * u_curve, r2 = dot(c, c);
+  vec2 cd = c * (1. + k * (1. - r2));
+  vec2 uv = vec2(cd.x * .5 + .5, .5 - cd.y * .5);
+  // 径向色差，越靠边越明显
+  vec2 ca = cd * .0016 * u_curve * r2;
+  vec3 col = vec3(texture(u_tex, uv + ca).r, texture(u_tex, uv).g, texture(u_tex, uv - ca).b);
+  // 辉光：三档 mipmap 模糊叠加，减去一点阈值避免把背景整体抬亮
+  vec3 bloom = textureLod(u_tex, uv, 2.).rgb * .55 + textureLod(u_tex, uv, 4.).rgb * .35 + textureLod(u_tex, uv, 6.).rgb * .3;
+  col += max(bloom - .045, 0.) * u_glow * 1.6;
+  // 扫描线：每 3 个 CSS 像素一条；外加一条缓慢下行的亮带
+  float s = .5 + .5 * cos(gl_FragCoord.y * 6.2832 / (3. * u_dpr));
+  col *= 1. - u_scan * .5 * (1. - s);
+  float band = exp(-pow((fract(u_t * .06) - (1. - v_uv.y)) * 10., 2.));
+  col += (col * .3 + .01) * band * u_scan;
+  // 暗角
+  col *= 1. - .2 * u_curve * r2;
+  o = vec4(col, 1.);
+}`;
+  const sh = (type, src) => {
+    const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) { console.error(gl.getShaderInfoLog(s)); return null; }
+    return s;
+  };
+  const v = sh(gl.VERTEX_SHADER, vs), f = sh(gl.FRAGMENT_SHADER, fs);
+  if (!v || !f) return null;
+  const prog = gl.createProgram();
+  gl.attachShader(prog, v); gl.attachShader(prog, f); gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) { console.error(gl.getProgramInfoLog(prog)); return null; }
+  gl.useProgram(prog);
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+  const loc = gl.getAttribLocation(prog, 'p');
+  gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+  const tex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  const U = (n) => gl.getUniformLocation(prog, n);
+  const uT = U('u_t'), uGlow = U('u_glow'), uScan = U('u_scan'), uCurve = U('u_curve'), uDpr = U('u_dpr');
+  gl.uniform1i(U('u_tex'), 0);
+  document.body.appendChild(c);
+  const api = {
+    on: true,
+    resize() { c.width = cv.width; c.height = cv.height; gl.viewport(0, 0, c.width, c.height); },
+    set(on) { api.on = on; c.style.display = on ? 'block' : 'none'; cv.style.display = on ? 'none' : 'block'; },
+    render(t) {
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, cv);
+      gl.generateMipmap(gl.TEXTURE_2D);
+      gl.uniform1f(uT, t); gl.uniform1f(uGlow, FX.glow); gl.uniform1f(uScan, FX.scan);
+      gl.uniform1f(uCurve, FX.curve); gl.uniform1f(uDpr, dpr);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+    },
+  };
+  api.resize(); api.set(true);
+  return api;
+}
+window.hudFx = params.get('fx') === '0' ? null : createFx();
+
+// ---------- sfx：全部用 WebAudio 现场合成，不依赖音频文件 ----------
+// ?sfx= 主音量（0 关闭，默认 .35），?hum=0 关闭底噪；WE 用户属性同名（sfx 滑块、hum 复选框）。
+// 浏览器里 AudioContext 需要一次点击 / 按键才能启动；Wallpaper Engine 与 Lively 中可直接播放。
+const SFX = { vol: fxNum('sfx', .35), hum: params.get('hum') !== '0' };
+const sfx = (() => {
+  // offT 不为 null 时处于离线渲染：tone 的起始时间取 offT，而不是实时上下文的当前时间
+  let ac = null, master = null, humNode = null, lastLog = 0, offT = null;
+  const ensure = () => {
+    if (ac) return ac.state === 'running';
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC || SFX.vol <= 0) return false;
+    ac = new AC();
+    master = ac.createGain(); master.gain.value = SFX.vol;
+    // 短反馈延迟，给提示音一点空间感
+    const delay = ac.createDelay(), fb = ac.createGain(), wet = ac.createGain();
+    delay.delayTime.value = .13; fb.gain.value = .3; wet.gain.value = .3;
+    master.connect(ac.destination); master.connect(delay); delay.connect(fb); fb.connect(delay); delay.connect(wet); wet.connect(ac.destination);
+    ac.resume();
+    return ac.state === 'running';
+  };
+  const tone = (f, d, { type = 'sine', g = .2, to = 0, at = 0 } = {}) => {
+    if (offT == null && !ensure()) return;
+    const t = (offT ?? ac.currentTime) + at, o = ac.createOscillator(), e = ac.createGain();
+    o.type = type; o.frequency.setValueAtTime(f, t);
+    if (to) o.frequency.exponentialRampToValueAtTime(to, t + d);
+    e.gain.setValueAtTime(0, t); e.gain.linearRampToValueAtTime(g, t + .006); e.gain.exponentialRampToValueAtTime(.0001, t + d);
+    o.connect(e); e.connect(master); o.start(t); o.stop(t + d + .05);
+  };
+  // 底噪：两个微失谐的锯齿波经低通，截止频率随 CPU / GPU 负载升高，负载越高越“亮”
+  const startHum = () => {
+    if (humNode || !ensure()) return;
+    const lp = ac.createBiquadFilter(), g = ac.createGain();
+    lp.type = 'lowpass'; lp.Q.value = 4; lp.frequency.value = 140; g.gain.value = 0;
+    const os = [55, 55.35, 110.2].map((f, i) => {
+      const o = ac.createOscillator(); o.type = i < 2 ? 'sawtooth' : 'sine'; o.frequency.value = f; o.connect(lp); o.start(); return o;
+    });
+    lp.connect(g); g.connect(master);
+    g.gain.setTargetAtTime(.045, ac.currentTime, 2);
+    humNode = { lp, g, os };
+  };
+  const stopHum = () => {
+    if (!humNode) return;
+    const h = humNode; humNode = null;
+    h.g.gain.setTargetAtTime(0, ac.currentTime, .5);
+    setTimeout(() => h.os.forEach(o => o.stop()), 2500);
+  };
+  let booted = false;
+  const unlock = () => {
+    if (booted || !ensure()) return;
+    booted = true;
+    if (SFX.hum) startHum();
+    boot();
+  };
+  const boot = () => { tone(180, .7, { type: 'triangle', to: 1440, g: .05 }); tone(1440, .25, { g: .04, at: .62 }); };
+  addEventListener('pointerdown', unlock); addEventListener('keydown', unlock);
+  setTimeout(unlock, 300);
+  const api = {
+    boot,
+    // 新日志：短促的高频双响，最多每 1.8s 一次，避免长时间运行时过于频繁
+    log(now) {
+      if (now - lastLog < 1.8) return;
+      lastLog = now;
+      const f = 2200 + Math.random() * 600;
+      tone(f, .045, { g: .05 }); tone(f * 1.5, .03, { g: .025, at: .05 });
+    },
+    // 状态切换：回到 NOMINAL 为下行双音，ELEVATED 为上行双音，CRITICAL 为三连方波
+    status(level) {
+      if (level === 'NOMINAL') { tone(988, .16, { g: .07, to: 740 }); tone(659, .22, { g: .06, at: .14 }); }
+      else if (level === 'ELEVATED') { tone(660, .1, { g: .08 }); tone(990, .16, { g: .08, at: .11 }); }
+      else for (let i = 0; i < 3; i++) tone(1320, .09, { type: 'square', g: .035, at: i * .16 });
+    },
+    // 组件载入：短促提示音，音高随载入顺序逐级升高
+    stage(i) {
+      const f = 880 * Math.pow(2, i / 7);
+      tone(f, .06, { g: .045 }); tone(f * 2, .035, { g: .018, at: .03 });
+    },
+    // 告警：三种告警音高不同；进入为两声短促方波 + 上扬，解除为一声下行
+    alert(k, on) {
+      const f = (ALERT_DEF[k] && ALERT_DEF[k].f) || 700;
+      if (on) { tone(f, .1, { type: 'square', g: .035 }); tone(f, .1, { type: 'square', g: .035, at: .14 }); tone(f * 1.5, .25, { g: .05, at: .28 }); }
+      else tone(f * 1.5, .3, { g: .04, to: f });
+    },
+    // 挂载：信号锁定时的短促上扬双音
+    mount() { tone(1560, .05, { g: .04 }); tone(2340, .08, { g: .035, at: .06, to: 3120 }); },
+    // 全部载入完成：低频下沉 + 高频提示
+    land() {
+      tone(72, .9, { g: .22, to: 38 });
+      tone(2640, .35, { g: .035, at: .02 });
+      tone(1320, .55, { type: 'triangle', g: .03, at: .06 });
+    },
+    update(load) {
+      if (!ac) return;
+      if (SFX.hum && !humNode) startHum();
+      if (!SFX.hum && humNode) stopHum();
+      if (humNode) humNode.lp.frequency.setTargetAtTime(140 + load * 900, ac.currentTime, .8);
+      master.gain.setTargetAtTime(SFX.vol, ac.currentTime, .2);
+    },
+    // 离线渲染（导出视频用）：按记录的 [方法名, 参数, 秒] 事件和 [秒, 负载] 底噪曲线，用同一套合成器渲染单声道音轨
+    async renderOffline(events, loads, dur, sr = 48000) {
+      const off = new OfflineAudioContext(1, Math.ceil(dur * sr), sr), saved = [ac, master, lastLog];
+      ac = off; lastLog = -1e9;
+      master = off.createGain(); master.gain.value = SFX.vol;
+      const delay = off.createDelay(), fb = off.createGain(), wet = off.createGain();
+      delay.delayTime.value = .13; fb.gain.value = .3; wet.gain.value = .3;
+      master.connect(off.destination); master.connect(delay); delay.connect(fb); fb.connect(delay); delay.connect(wet); wet.connect(off.destination);
+      if (SFX.hum) {
+        const lp = off.createBiquadFilter(), g = off.createGain();
+        lp.type = 'lowpass'; lp.Q.value = 4; lp.frequency.value = 140; g.gain.value = 0;
+        [55, 55.35, 110.2].forEach((f, i) => { const o = off.createOscillator(); o.type = i < 2 ? 'sawtooth' : 'sine'; o.frequency.value = f; o.connect(lp); o.start(0); });
+        lp.connect(g); g.connect(master); g.gain.setTargetAtTime(.045, .3, 2);
+        for (const [t, l] of loads) lp.frequency.setTargetAtTime(140 + l * 900, t, .8);
+      }
+      for (const [name, args, t] of events) { offT = t; api[name](...args); }
+      offT = null;
+      const buf = await off.startRendering();
+      [ac, master, lastLog] = saved;
+      return buf.getChannelData(0);
+    },
+  };
+  return api;
+})();
+
+// ---------- 控制面板：主题、后处理、音效、帧率上限 ----------
+// 设置保存在 localStorage；网址参数与 Wallpaper Engine 属性优先级更高。右上角按钮或 P 键打开，Esc 关闭。
+const SETTINGS_KEY = 'hud-settings-v1';
+// 默认限 60 FPS：高分屏上满刷新率重绘 + 后处理开销很大，60 帧观感差别不大
+const DEFAULTS = { theme: 'ember', fx: true, curve: .5, glow: .7, scan: .4, sfx: .35, hum: true, fps: 60 };
+const cfg = { ...DEFAULTS };
+try { Object.assign(cfg, JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}')); } catch {}
+for (const k of ['curve', 'glow', 'scan', 'sfx', 'fps']) if (params.get(k) != null) cfg[k] = +params.get(k);
+if (params.get('theme')) cfg.theme = params.get('theme');
+if (params.get('fx') === '0') cfg.fx = false;
+if (params.get('hum') === '0') cfg.hum = false;
+
+const panel = (() => {
+  const sliders = [
+    ['curve', '曲率', 0, 1.5], ['glow', '辉光', 0, 1.5], ['scan', '扫描线', 0, 1],
+  ];
+  const el = document.createElement('div');
+  el.id = 'hud-panel'; el.hidden = true;
+  el.setAttribute('role', 'dialog'); el.setAttribute('aria-label', 'HUD 控制面板');
+  el.innerHTML = `
+    <header><span>CONTROL</span><button type="button" class="x" data-close aria-label="关闭">×</button></header>
+    <section><h3>主题</h3><div class="themes">${Object.keys(THEMES).map(n => `
+      <button type="button" data-theme="${n}"><i style="background:${THEMES[n].hot}"></i><i style="background:${THEMES[n].cool}"></i><i style="background:${THEMES[n].mark}"></i><span>${n}</span></button>`).join('')}
+    </div></section>
+    <section><h3>画面</h3>
+      <label class="tog"><span>后处理</span><input type="checkbox" data-k="fx"></label>
+      ${sliders.map(([k, l, mn, mx]) => `
+      <label class="sl"><span>${l}</span><output data-o="${k}"></output>
+        <input type="range" min="${mn}" max="${mx}" step=".05" data-k="${k}"></label>`).join('')}
+      <label class="sel"><span>帧率上限</span><select data-k="fps">
+        <option value="0">跟随显示器</option><option value="30">30</option><option value="60">60</option><option value="120">120</option><option value="144">144</option>
+      </select></label>
+    </section>
+    <section><h3>音效</h3>
+      <label class="sl"><span>音量</span><output data-o="sfx"></output><input type="range" min="0" max="1" step=".05" data-k="sfx"></label>
+      <label class="tog"><span>环境底噪</span><input type="checkbox" data-k="hum"></label>
+    </section>
+    <footer><button type="button" data-reset>恢复默认</button><span>P 打开 · Esc 关闭</span></footer>`;
+  const gear = document.createElement('button');
+  gear.id = 'hud-gear'; gear.type = 'button'; gear.setAttribute('aria-label', '打开控制面板');
+  gear.innerHTML = '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.2"/><path d="M5 2.5v3M10 6.5v3M7 10.5v3" stroke="currentColor" stroke-width="2"/></svg>';
+  document.body.append(el, gear);
+
+  const toggle = (open = el.hidden) => { el.hidden = !open; gear.setAttribute('aria-expanded', String(open)); if (open) el.querySelector('button, input')?.focus(); };
+  gear.addEventListener('click', () => toggle());
+  el.addEventListener('click', (e) => {
+    const t = e.target.closest('button');
+    if (!t) return;
+    if (t.dataset.close != null) toggle(false);
+    if (t.dataset.theme) applySettings({ theme: t.dataset.theme });
+    if (t.dataset.reset != null) applySettings({ ...DEFAULTS });
+  });
+  el.addEventListener('input', (e) => {
+    const k = e.target.dataset.k;
+    if (!k) return;
+    applySettings({ [k]: e.target.type === 'checkbox' ? e.target.checked : +e.target.value });
+  });
+  // 面板内的按键不触发全局快捷键
+  el.addEventListener('keydown', (e) => { if (e.key === 'Escape') toggle(false); e.stopPropagation(); });
+  addEventListener('keydown', (e) => {
+    const k = e.key.toLowerCase();
+    if (k === 'p') toggle();
+    else if (k === 'escape') toggle(false);
+    else if (k === 't') { const names = Object.keys(THEMES); applySettings({ theme: names[(names.indexOf(themeName) + 1) % names.length] }); }
+    else if (k === 'f') applySettings({ fx: !cfg.fx });
+  });
+
+  return {
+    sync() {
+      for (const inp of el.querySelectorAll('[data-k]')) {
+        const v = cfg[inp.dataset.k];
+        if (inp.type === 'checkbox') inp.checked = !!v;
+        else inp.value = v;
+        if (inp.type === 'range') inp.style.setProperty('--p', `${(v - inp.min) / (inp.max - inp.min) * 100}%`);
+      }
+      for (const o of el.querySelectorAll('[data-o]')) o.textContent = Math.round(cfg[o.dataset.o] * 100) + '%';
+      for (const b of el.querySelectorAll('[data-theme]')) b.setAttribute('aria-pressed', String(b.dataset.theme === themeName));
+      el.querySelector('[data-k="fx"]').disabled = !window.hudFx;
+      for (const k of ['curve', 'glow', 'scan']) el.querySelector(`[data-k="${k}"]`).disabled = !window.hudFx || !cfg.fx;
+    },
+  };
+})();
+
+// 面板配色跟随主题
+function themeCss() {
+  const r = document.documentElement.style;
+  for (const k of ['fg', 'dim', 'line', 'hot', 'cool', 'mark']) r.setProperty(`--hud-${k}`, C[k]);
+  r.setProperty('--hud-bg', alpha(C.bg, .9));
+}
+
+function applySettings(patch = {}, save = true) {
+  Object.assign(cfg, patch);
+  if (!THEMES[cfg.theme]) cfg.theme = 'ember';
+  if (cfg.theme !== themeName) setTheme(cfg.theme);
+  themeCss();
+  FX.curve = cfg.curve; FX.glow = cfg.glow; FX.scan = cfg.scan;
+  if (window.hudFx) window.hudFx.set(cfg.fx);
+  SFX.vol = cfg.sfx; SFX.hum = cfg.hum;
+  fpsCap = cfg.fps;
+  if (save) try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(cfg)); } catch {}
+  panel.sync();
+}
+applySettings({}, false);
+
+// ---------- 开屏：组件依次载入 ----------
+// 每个组件从自己的锚点向外生长（圆形裁剪逐渐扩大）并淡入，组件里的文字随之从乱码解码；每个组件开始载入时响一声提示音。按 R 重播。
+// [组件, 开始秒, 持续秒, 锚点 x, 锚点 y, 生长半径（0 表示覆盖全屏）, 出现方式]
+// 出现方式：grow = 线条从锚点向外平滑延展；neon = 霓虹灯管式闪烁点亮（只在开屏和信号恢复挂载时出现）
+const STAGES = [
+  ['core', 0, .7, 960, 540, 320, 'neon'],
+  ['wingA', .45, 1.1, 960, 540, 0, 'grow'],
+  ['spec', .8, .6, 960, 280, 340, 'neon'],
+  ['wingB', 1.1, 1.1, 960, 540, 0, 'grow'],
+  ['keel', 1.45, .7, 960, 800, 420, 'grow'],
+  ['horizon', 1.7, .7, 960, 548, 0, 'grow'],
+  ['mem', 1.9, .8, 960, 878, 480, 'neon'],
+  ['decor', 2.25, .9, 960, 540, 0, 'grow'],
+  // 读数格与指引线最后出现
+  ['cells', 2.8, .8, 960, 560, 0, 'neon'],
+];
+const STAGE_MAP = Object.fromEntries(STAGES.map(([k, at, dur, x, y, r, mode], i) => [k, { at, dur, x, y, r, mode, seed: i * 3.7 }]));
+const INTRO_END = Math.max(...STAGES.map(st => st[1] + st[2]));
+// ?intro=0 跳过开屏（生成预览图时用）
+const INTRO = { t0: params.get('intro') === '0' ? -1e9 : null, started: new Set(), landed: false };
+// 挂载：某项数据从无信号变为有信号时，相关组件重新生长、霓虹闪烁点亮、文字解码一次
+const MOUNT = {}, MOUNT_DUR = .8;
+const MOUNT_MAP = {
+  cpu: ['wingA', 'cells', 'spec', 'core'], gpu: ['wingA', 'cells', 'spec', 'core'], mem: ['core', 'mem'],
+  temps: ['wingB', 'cells'], power: ['cells'], disks: ['wingB', 'cells'], board: ['wingB'],
+  net: ['keel', 'horizon'], host: ['core', 'spec'],
+};
+let presentPrev = null;
+function detectMounts(now) {
+  const present = {
+    cpu: D.cpu.u != null, gpu: D.gpu.u != null, mem: D.mem.u != null, temps: D.cpu.t != null || D.gpu.t != null,
+    power: !!D.power || D.gpu.power != null, disks: D.disks.length > 0, board: !!D.board, net: D.net.dn != null, host: !!D.host,
+  };
+  if (presentPrev && INTRO.landed) {
+    let any = false;
+    for (const k of Object.keys(present)) if (present[k] && !presentPrev[k]) { for (const st of MOUNT_MAP[k]) MOUNT[st] = now; any = true; }
+    if (any) sfx.mount();
+  }
+  presentPrev = present;
+}
+// 霓虹点亮：前 65% 在亮 / 暗之间随机跳几次，之后稳定爬升到全亮
+function neon(p, seed) {
+  if (p >= .65) return .7 + .3 * (p - .65) / .35;
+  const k = Math.floor(p * 16), h = Math.sin((k + 1) * 78.233 + seed * 12.9898) * 43758.5453;
+  return h - Math.floor(h) > .5 ? .85 : .06;
+}
+const GLYPHS = '01#%&/<>=+*:░▒';
+const clamp01 = (v) => Math.min(1, Math.max(0, v));
+const outCubic = (x) => 1 - Math.pow(1 - x, 3);
+let SCR = 0, AMUL = 1, rawAlpha = 1;
+const scramble = (s) => s.replace(/[^\s·/]/g, (ch) => Math.random() < SCR ? GLYPHS[(Math.random() * GLYPHS.length) | 0] : ch);
+// 组件内部各处设置的 globalAlpha 都乘上当前组件的载入透明度，不必改每个绘制函数
+const alphaDesc = Object.getOwnPropertyDescriptor(CanvasRenderingContext2D.prototype, 'globalAlpha');
+Object.defineProperty(ctx, 'globalAlpha', {
+  get: () => rawAlpha,
+  set: (v) => { rawAlpha = v; alphaDesc.set.call(ctx, v * AMUL); },
+});
+function introTime(now) {
+  if (INTRO.t0 == null) INTRO.t0 = now;
+  return now - INTRO.t0;
+}
+function staged(key, now, fn) {
+  const st = STAGE_MAP[key], p = clamp01((introTime(now) - st.at) / st.dur);
+  if (p <= 0) return;
+  let amul = 1, r = 0, scr = p < 1 ? 1 - clamp01((p - .3) / .6) : 0;
+  const full = st.r || Math.hypot(ER - EL, EB - ET) / 2 + 60;
+  if (p < 1) {
+    if (st.mode === 'neon') { amul = neon(p, st.seed); r = full * outCubic(clamp01(p / .35)); }
+    else { amul = .35 + .65 * outCubic(p); r = full * outCubic(p); }
+  } else if (MOUNT[key] != null && now - MOUNT[key] < MOUNT_DUR) {
+    // 挂载：快速重新生长 + 霓虹闪烁 + 文字解码
+    const q = (now - MOUNT[key]) / MOUNT_DUR;
+    amul = neon(q, st.seed + 5); r = full * outCubic(clamp01(q / .4)); scr = 1 - clamp01((q - .2) / .6);
+  }
+  if (amul === 1 && !r) { fn(); return; }
+  ctx.save();
+  if (r) { ctx.beginPath(); ctx.arc(st.x, st.y, Math.max(1, r), 0, TAU); ctx.clip(); }
+  AMUL = amul; SCR = scr; ctx.globalAlpha = 1;
+  fn();
+  ctx.restore();
+  AMUL = 1; SCR = 0; ctx.globalAlpha = 1;
+}
+addEventListener('keydown', (e) => {
+  if (e.key.toLowerCase() !== 'r' || e.target.closest?.('#hud-panel')) return;
+  INTRO.t0 = null; INTRO.started.clear(); INTRO.landed = false;
+});
+
+// ---------- 告警：CPU 满载 / GPU 满载 / 内存压力 / 下载激增 / 上传激增 ----------
+// 高于 hi 持续 2 秒进入告警，低于 lo 持续 2 秒解除；每种告警有自己的颜色、提示文字、日志与音高
+const ALERT_DEF = {
+  cpu: { label: 'CPU SATURATED', color: () => C.hot, value: () => D.cpu.u == null ? null : D.cpu.u * 100, hi: 90, lo: 80, log: 'cpu', f: 880, fmt: (v) => `${v.toFixed(0)}% sustained` },
+  gpu: { label: 'GPU SATURATED', color: () => C.mark, value: () => D.gpu.u == null ? null : D.gpu.u * 100, hi: 90, lo: 80, log: 'gpu', f: 660, fmt: (v) => `${v.toFixed(0)}% sustained` },
+  mem: { label: 'MEMORY PRESSURE', color: () => C.alt, value: () => D.mem.u == null || !D.mem.t ? null : D.mem.u / D.mem.t * 100, hi: 90, lo: 80, log: 'sys', f: 520, fmt: (v) => `${v.toFixed(0)}% of pool` },
+  dl: { label: 'DOWNLINK SURGE', color: () => C.cool, value: () => D.net.dn == null ? null : D.net.dn / 1e6, hi: 50, lo: 20, log: 'sys', f: 1040, fmt: (v) => `${v.toFixed(0)} MB/s inbound` },
+  cput: { label: 'CPU OVERHEAT', color: () => C.heat, value: () => D.cpu.t, hi: 90, lo: 80, log: 'cpu', f: 1320, fmt: (v) => `${v.toFixed(0)}°C package` },
+  gput: { label: 'GPU OVERHEAT', color: () => C.heat, value: () => D.gpu.t, hi: 85, lo: 75, log: 'gpu', f: 1180, fmt: (v) => `${v.toFixed(0)}°C core` },
+  disk: { label: 'STORAGE BOTTLENECK', color: () => C.fg, value: () => busiestDisk()?.busy ?? null, hi: 90, lo: 70, log: 'io', f: 440, fmt: (v) => `${busiestDisk().n} ${v.toFixed(0)}% busy` },
+  ul: { label: 'UPLINK SURGE', color: () => C.cool, value: () => D.net.up == null ? null : D.net.up / 1e6, hi: 20, lo: 8, log: 'sys', f: 1240, fmt: (v) => `${v.toFixed(1)} MB/s outbound` },
+};
+// 忙碌率最高的那块盘；都没有忙碌率数据时为 null
+const busiestDisk = () => D.disks.filter(d => d.busy != null).sort((a, b) => b.busy - a.busy)[0] || null;
+const ALERTS = Object.fromEntries(Object.keys(ALERT_DEF).map(k => [k, { on: false, pend: false, pt: 0, t0: 0 }]));
+const activeAlerts = () => Object.keys(ALERTS).filter(k => ALERTS[k].on);
+// 当前轮换到的告警（每 2.5 秒换一条）；没有告警时为 null
+const currentAlert = (now) => { const a = activeAlerts(); return a.length ? a[Math.floor(now / 2.5) % a.length] : null; };
+function updateAlerts(now) {
+  for (const k of Object.keys(ALERT_DEF)) {
+    const a = ALERTS[k], def = ALERT_DEF[k], v = def.value();
+    const want = v != null && (a.on ? v >= def.lo : v >= def.hi);
+    if (want === a.on) { a.pend = a.on; continue; }
+    if (a.pend !== want) { a.pend = want; a.pt = now; continue; }
+    if (now - a.pt < 2) continue;
+    a.on = want; a.t0 = now;
+    sfx.alert(k, want);
+    logs[def.log].push(want ? 'warn' : 'ok', want ? `${def.label} · ${def.fmt(v)}` : `${def.label.split(' ')[0]} · recovered`, now);
+    logs[def.log].next = now + 4;
+  }
+}
+// 屏幕左右边缘的告警光晕，颜色取最早触发的那一项
+function alertGlow(now) {
+  const cur = currentAlert(now);
+  if (!cur) return;
+  const col = ALERT_DEF[cur].color(), a = .07 + .07 * Math.sin(now * 4);
+  for (const [x0, x1] of [[EL, EL + 160], [ER, ER - 160]]) {
+    const g = ctx.createLinearGradient(x0, 0, x1, 0);
+    g.addColorStop(0, alpha(col, a)); g.addColorStop(1, alpha(col, 0));
+    ctx.fillStyle = g; ctx.fillRect(Math.min(x0, x1), ET, 160, EB - ET);
+  }
+}
+
+
+// ---------- 功能巡演（?demo=tour） ----------
+// 64 秒一轮：平稳 → CPU 满载 → GPU 满载 → 内存压力 → 下载 / 上传激增 → 传感器掉线 → 恢复，期间曲面与辉光起伏一次；
+// 每轮换一套底色主题，结尾快速轮换一遍（开屏只在页面打开时播放一次）
+const TOUR_LEN = 64, TOUR_T0 = performance.now() / 1000, TOUR_BASE = { power: DEMO_DATA.power, board: DEMO_DATA.board };
+let tourLoop = -1;
+function tour() {
+  const t = performance.now() / 1000 - TOUR_T0, loop = Math.floor(t / TOUR_LEN), T = t % TOUR_LEN;
+  // 每一轮用一套底色主题（第一轮 ember，之后依次换）；结尾 6 秒快速轮换其余主题，最后停在下一轮的主题上。直接切换，不重播动画
+  const names = Object.keys(THEMES), n = names.length, j = Math.min(Math.floor((T - 58) / 1.5), 3);
+  const ti = T < 58 ? loop % n : j < 3 ? (loop + 1 + j) % n : (loop + 1) % n;
+  if (ti !== tourLoop) { tourLoop = ti; applySettings({ theme: names[ti] }, false); }
+  const sm = (a, b) => { const x = clamp01((T - a) / (b - a)); return x * x * (3 - 2 * x); };
+  const bump = (a, b, c, d) => sm(a, b) * (1 - sm(c, d));
+  const wob = (f, k = 0) => (Math.sin(t * f + k) + Math.sin(t * f * 2.3 + k * 1.7)) * .5;
+  const cl = (v) => Math.min(1, Math.max(0, v));
+  const cpuHi = bump(6, 9, 13, 15), gpuHi = bump(14, 17, 21, 23), memHi = bump(22, 25, 29, 31);
+  const dl = bump(30, 31, 34, 35), ul = bump(34, 35, 38, 39), lost = T > 40 && T < 45.5, load = bump(14, 15, 18, 19);
+  D.up = 86400 * 3 + 3600 * 7 + t;
+  D.cpu.u = cl(.2 + .78 * cpuHi + .05 * wob(1.3));
+  D.cpu.cores = D.cpu.cores.map((_, i) => cl(D.cpu.u * (D.cpu.types[i] === 'E' ? .75 : 1.05) + .1 * wob(.9, i)));
+  D.cpu.f = 3.3 + 1.6 * cpuHi + .15 * D.cpu.u;
+  D.cpu.t = lost ? null : 38 + 54 * cpuHi + 6 * D.cpu.u;
+  D.gpu.u = cl(.08 + .9 * gpuHi + .04 * wob(1.7, 3));
+  D.gpu.vu = 2.6 + 12.8 * gpuHi; D.gpu.t = lost ? null : 34 + 56 * gpuHi;
+  D.gpu.power = lost ? null : 28 + 300 * gpuHi; D.gpu.clock = .3 + 2.3 * gpuHi;
+  D.mem.u = D.mem.t * (.36 + .6 * memHi + .02 * wob(.5));
+  D.mem.avail = D.mem.t - D.mem.u; D.mem.cache = Math.min(D.mem.avail, 8 - 6 * memHi);
+  D.mem.commit = D.mem.u * 1.2 + 2; D.mem.cl = D.mem.t + 9.5; D.mem.comp = .2 + 2.4 * memHi;
+  D.net.dn = 3e5 + 1.2e8 * dl + 2e5 * wob(2.1); D.net.up = 5e4 + 4.6e7 * ul + 3e4 * wob(1.9);
+  D.disks.forEach((d, i) => {
+    d.r = i === 1 ? 4e8 * load : 2e5 * (1 + wob(1.1, i));
+    d.w = i === 0 ? 1.4e8 * dl + 1e6 : 1e5;
+    d.busy = i === 0 ? 12 + 86 * dl : i === 1 ? 8 + 90 * load : 4 + 2 * wob(.7, i);
+  });
+  D.power = lost ? null : { ...TOUR_BASE.power, cpuW: 42 + 170 * cpuHi };
+  D.board = lost ? null : TOUR_BASE.board;
+  // 结尾段：曲面与辉光平缓起伏一次
+  const fx = bump(48, 52, 56, 60);
+  FX.curve = cfg.curve + .7 * fx; FX.glow = cfg.glow + .5 * fx;
+}
+if (TOUR) setInterval(tour, 100);
+// ---------- loop ----------
+let last = performance.now(), lastDraw = 0, fps = 60, fpsFrames = 0, fpsT = last;
+function update(dt, now) {
+  const k = (r) => 1 - Math.exp(-r * dt);
+  // 所有读数都允许缺失：缺失时为 null，恢复时直接取新值
+  S.cpu = ease(S.cpu, D.cpu.u, k(3));
+  for (let i = 0; i < D.cpu.cores.length && i < 64; i++) S.cores[i] += (D.cpu.cores[i] - S.cores[i]) * k(5);
+  S.f = ease(S.f, D.cpu.f, k(2)); S.ct = ease(S.ct, D.cpu.t, k(1.5));
+  // 大号读数单独用更慢的平滑（时间常数约 1.2s）并只显示整数，避免每秒采样的抖动让数字乱滚
+  S.cpuD = ease(S.cpuD, D.cpu.u, k(.8)); S.gpuD = ease(S.gpuD, D.gpu.u, k(.8));
+  S.gpu = ease(S.gpu, D.gpu.u, k(3)); S.vu = ease(S.vu, D.gpu.vu, k(2)); S.gt = ease(S.gt, D.gpu.t, k(1.5));
+  S.mem = ease(S.mem, D.mem.u, k(2));
+  S.mcache = ease(S.mcache, D.mem.cache, k(2)); S.mcommit = ease(S.mcommit, D.mem.commit, k(2));
+  S.up = ease(S.up, D.net.up, k(4)); S.dn = ease(S.dn, D.net.dn, k(4));
+  let dr = null, dw = null;
+  for (const d of D.disks) { if (d.r != null) dr = (dr || 0) + d.r; if (d.w != null) dw = (dw || 0) + d.w; }
+  S.dio.length = D.disks.length;
+  D.disks.forEach((d, i) => { const o = S.dio[i] || (S.dio[i] = [null, null]); o[0] = ease(o[0], d.r, k(4)); o[1] = ease(o[1], d.w, k(4)); });
+  S.dr = ease(S.dr, dr, k(4)); S.dw = ease(S.dw, dw, k(4));
+  // 外延射线上粒子的流速随负载 / 吞吐变化
+  const io = (b) => Math.min(1, Math.log10(1 + b / 1e5) / 4);
+  [S.cpu || 0, S.gpu || 0, io(S.dr || 0), io(S.dw || 0)].forEach((v, i) => { S.flow[i] = (S.flow[i] + dt * (.03 + v * .5)) % 1; });
+  S.dio.forEach((o, i) => {
+    const v = io((o[0] || 0) + (o[1] || 0));
+    S.flowD[i] = ((S.flowD[i] || 0) + dt * (.03 + v * .5)) % 1;
+    S.spin[i] = ((S.spin[i] || 0) + dt * (1.2 + v * 24)) % TAU;
+  });
+
+  loadAcc += dt;
+  if (loadAcc >= 1) {
+    loadAcc %= 1;
+    cpuHist[loadHead] = S.cpu ?? NaN; gpuHist[loadHead] = S.gpu ?? NaN; loadHead = (loadHead + 1) % LOADN;
+  }
+  // 按时间采样（与帧率无关），30Hz
+  sampleAcc += dt;
+  while (sampleAcc >= 1 / 30) {
+    sampleAcc -= 1 / 30;
+    netDn[histHead] = S.dn || 0; netUp[histHead] = S.up || 0; histHead = (histHead + 1) % HIST;
+  }
+  let m = 2.5e5; for (let i = 0; i < HIST; i++) m = Math.max(m, netDn[i], netUp[i]);
+  S.scopeMax += (m * 1.15 - S.scopeMax) * k(2);
+
+  updateAlerts(now);
+  detectMounts(now);
+  sfx.update(Math.max(S.cpu || 0, S.gpu || 0));
+  const it = introTime(now);
+  STAGES.forEach(([k, at], i) => { if (it >= at && !INTRO.started.has(k)) { INTRO.started.add(k); sfx.stage(i); } });
+  if (!INTRO.landed && it > INTRO_END) { INTRO.landed = true; sfx.land(); }
+
+  for (const [key, base] of [['cpu', 2.4], ['gpu', 2.8], ['sys', 3.4], ['io', 3.1]]) {
+    const log = logs[key];
+    if (now >= log.next) {
+      const [tag, msg] = pick(gens[key])();
+      log.push(tag, msg, now);
+      sfx.log(now);
+      log.next = now + base + Math.random() * 1.8;
+    }
+  }
+}
+
+function draw(t, now) {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.drawImage(bgLayer, 0, 0);
+  ctx.setTransform(dpr * s, 0, 0, dpr * s, dpr * ox, dpr * oy);
+  ctx.textBaseline = 'middle';
+  ctx.lineCap = 'butt'; ctx.lineJoin = 'round';
+
+  alertGlow(now);
+  staged('decor', now, decor);
+  for (const k of [0, 1]) {
+    staged('horizon', now, () => horizon(k, now));
+    staged('wingA', now, () => wingA(k, now));
+    staged('wingB', now, () => wingB(k));
+  }
+  if (introTime(now) > INTRO_END) {
+    for (const k of [0, 1]) {
+      pulse(G.A[k], t, 170, k * .5);
+      pulse(G.B[k], t, 170, .25 + k * .5);
+      pulse(G.crown[k], t, 110, .6);
+    }
+    pulse(G.keel, t, 120, .1, 0, .5, true);
+    pulse(G.keel, t, 120, .1, .5, 1);
+  }
+  staged('keel', now, keel);
+  staged('core', now, () => core(t, now));
+  staged('spec', now, () => { specBlock(0); specBlock(1); });
+  staged('cells', now, cells);
+  staged('mem', now, memPanel);
+
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  txt(`${fps.toFixed(0)} FPS`, W - 20, H - 18, `11px ${F.mono}`, C.dim, 'right', .6);
+}
+
+function frame(ts) {
+  requestAnimationFrame(frame);
+  if (fpsCap > 0 && ts - lastDraw < 1000 / fpsCap - .5) return;
+  lastDraw = ts;
+  // rAF 的首帧时间戳可能早于脚本启动时刻，dt 需钳到非负
+  const dt = Math.min(.1, Math.max(0, (ts - last) / 1000)); last = ts;
+  const now = ts / 1000;
+  update(dt, now);
+  draw(now, now);
+  if (window.hudFx && window.hudFx.on) window.hudFx.render(now);
+  fpsFrames++;
+  if (ts - fpsT >= 1000) { fps = fpsFrames * 1000 / (ts - fpsT); fpsFrames = 0; fpsT = ts; }
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

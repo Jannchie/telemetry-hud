@@ -1,0 +1,12 @@
+/helper/target/
+/helper/tw/
+/dist/
+/video/
+/.claude/
+
+# 由 tools/package-wallpaper.mjs 从 hud/ 复制而来
+/wallpaper-engine/telemetry-hud/index.html
+/wallpaper-engine/telemetry-hud/fonts/
+
+# 应用程序版壁纸已不再维护
+/wallpaper-engine/telemetry-hud-app/
