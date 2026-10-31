@@ -64,9 +64,13 @@ The helper picks it up automatically within about 15 seconds. LibreHardwareMonit
 - **In-wallpaper panel**: click the button in the top-right corner. Settings are saved and take effect immediately, but the Wallpaper Engine properties override them each time the wallpaper loads.
 - **Standalone**: right-click the tray icon and choose **Settings**. The panel opens in its own window, and every change shows on the desktop right away.
 
+## Update or switch modes
+
+Download the new `hud-telemetry.exe`, double-click it and choose **Yes**, then pick how it runs. This replaces the installed copy and also lets you switch between the standalone wallpaper and the helper only.
+
 ## Uninstall
 
-Double-click `hud-telemetry.exe` again and choose **Yes**. This stops the helper or the standalone wallpaper, removes the autostart entry and deletes the installed copy along with the standalone wallpaper's settings.
+Double-click `hud-telemetry.exe` again and choose **No**. This stops the helper or the standalone wallpaper, removes the autostart entry and deletes the installed copy along with the standalone wallpaper's settings.
 
 ## Privacy
 

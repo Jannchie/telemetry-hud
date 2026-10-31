@@ -282,26 +282,37 @@ pub fn interactive() {
             return;
         }
     };
+    // 已安装：先问是重装 / 切换运行方式、卸载，还是保持现状。双击新下载的版本走“重装”就是升级，
+    // 所以这里不能只问卸载，否则从只装数据服务的旧版升级时永远选不到独立壁纸
     if ctx.is_installed() {
+        let current = match ctx.installed_mode() {
+            Some(Mode::Wallpaper) => tr("standalone wallpaper", "独立壁纸", "単体の壁紙"),
+            _ => tr("hardware helper only", "仅硬件数据服务", "ハードウェアヘルパーのみ"),
+        };
         let r = msg(
-            tr(
-                "Telemetry HUD is already installed.\n\nUninstall it?\nThis stops the background service, removes it from startup and deletes the installed program.\n\nChoose \"No\" to keep it (the service will be started if it isn't running).",
-                "Telemetry HUD 已安装。\n\n要卸载吗？\n卸载会停止后台服务、取消开机自启，并删除已安装的程序。\n\n选“否”保持现状（如果服务没在运行，会把它启动起来）。",
-                "Telemetry HUD はインストール済みです。\n\nアンインストールしますか？\nバックグラウンドサービスを停止し、自動起動を解除して、インストールしたプログラムを削除します。\n\n「いいえ」を選ぶとそのままにします（サービスが動いていなければ起動します）。",
-            ),
-            MB_YESNO | MB_ICONQUESTION,
+            &tr(
+                "Telemetry HUD is already installed (current: {m}).\n\nYes: reinstall with this version and choose how it runs.\nNo: uninstall (stops it, removes it from startup and deletes the installed program).\nCancel: keep it as is (it will be started if it isn't running).",
+                "Telemetry HUD 已安装（当前：{m}）。\n\n是：用这个版本重新安装，并重新选择运行方式。\n否：卸载（停止运行、取消开机自启，并删除已安装的程序）。\n取消：保持现状（如果没在运行，会把它启动起来）。",
+                "Telemetry HUD はインストール済みです（現在：{m}）。\n\nはい：このバージョンで再インストールし、動作方法を選び直します。\nいいえ：アンインストールします（停止し、自動起動を解除して、インストールしたプログラムを削除します）。\nキャンセル：そのままにします（動いていなければ起動します）。",
+            )
+            .replace("{m}", current),
+            MB_YESNOCANCEL | MB_ICONQUESTION,
         );
-        if r == IDYES {
+        if r == IDNO {
             match ctx.uninstall() {
                 Ok(()) => msg(tr("Telemetry HUD has been uninstalled.", "Telemetry HUD 已卸载。", "Telemetry HUD をアンインストールしました。"), MB_OK | MB_ICONINFORMATION),
                 Err(e) => msg(&tr("Uninstall failed: {e}", "卸载失败：{e}", "アンインストールに失敗しました：{e}").replace("{e}", &e), MB_OK | MB_ICONERROR),
             };
-        } else if !ctx.is_running() {
-            if let Err(e) = ctx.start(ctx.installed_mode().unwrap_or(Mode::Helper)) {
-                msg(&e, MB_OK | MB_ICONERROR);
-            }
+            return;
         }
-        return;
+        if r != IDYES {
+            if !ctx.is_running() {
+                if let Err(e) = ctx.start(ctx.installed_mode().unwrap_or(Mode::Helper)) {
+                    msg(&e, MB_OK | MB_ICONERROR);
+                }
+            }
+            return;
+        }
     }
     let mode = match msg(
         tr(
