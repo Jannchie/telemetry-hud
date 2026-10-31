@@ -15,14 +15,14 @@
     position: fixed; top: 16px; right: 16px; z-index: 20; width: 288px; max-height: calc(100vh - 32px); overflow: auto;
     padding: 14px 16px 12px; background: var(--hud-bg); border: 1px solid var(--hud-line); font-size: 12px;
     clip-path: polygon(14px 0, 100% 0, 100% 100%, 0 100%, 0 14px);
-    backdrop-filter: blur(6px);
+    /* 不用 backdrop-filter：盖在 WebGL 画布上做背景模糊，会让 Wallpaper Engine 的离屏渲染 CEF 崩溃 */
   }
   #hud-panel[hidden] { display: none; }
   #hud-panel header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; letter-spacing: .3em; font-weight: 600; font-size: 11px; }
   #hud-panel section { padding: 10px 0 4px; border-top: 1px solid var(--hud-line); }
   #hud-panel h3 { margin: 0 0 8px; font-size: 10px; font-weight: 600; letter-spacing: .25em; color: var(--hud-dim); }
   #hud-panel button { font: inherit; color: inherit; background: none; border: 1px solid var(--hud-line); cursor: pointer; }
-  #hud-panel button:focus-visible, #hud-panel input:focus-visible, #hud-panel select:focus-visible, #hud-gear:focus-visible { outline: 1px solid var(--hud-hot); outline-offset: 2px; }
+  #hud-panel button:focus-visible, #hud-panel input:focus-visible, #hud-gear:focus-visible { outline: 1px solid var(--hud-hot); outline-offset: 2px; }
   #hud-panel .x { border: none; font-size: 16px; line-height: 1; padding: 2px 6px; color: var(--hud-dim); }
   #hud-panel .x:hover { color: var(--hud-fg); }
   #hud-panel .themes { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
@@ -45,7 +45,12 @@
   #hud-panel input[type=checkbox]:checked { border-color: var(--hud-hot); }
   #hud-panel input[type=checkbox]:checked::after { transform: translateX(15px); background: var(--hud-hot); }
   #hud-panel input[type=checkbox]:disabled { opacity: .35; }
-  #hud-panel select { font: inherit; font-variant-numeric: tabular-nums; color: var(--hud-fg); background: var(--hud-bg); border: 1px solid var(--hud-line); padding: 3px 6px; }
+  /* 帧率用分段按钮而不是 <select>：原生下拉框会让 Wallpaper Engine 的离屏渲染 CEF 崩溃 */
+  #hud-panel .fps { display: grid; gap: 4px; margin: 0 0 10px; }
+  #hud-panel .seg { display: flex; gap: 4px; }
+  #hud-panel .seg button { flex: 1; padding: 3px 0; font-size: 11px; font-variant-numeric: tabular-nums; }
+  #hud-panel .seg button[aria-pressed="true"] { border-color: var(--hud-hot); color: var(--hud-hot); }
+  #hud-panel .seg button:hover { border-color: var(--hud-dim); }
   #hud-panel footer { display: flex; justify-content: space-between; align-items: center; padding-top: 10px; border-top: 1px solid var(--hud-line); color: var(--hud-dim); font-size: 10px; }
   #hud-panel footer button { padding: 4px 10px; font-size: 11px; }
   #hud-panel footer button:hover { border-color: var(--hud-hot); }
@@ -1763,9 +1768,9 @@ const panel = (() => {
       ${sliders.map(([k, l, mn, mx]) => `
       <label class="sl"><span>${l}</span><output data-o="${k}"></output>
         <input type="range" min="${mn}" max="${mx}" step=".05" data-k="${k}"></label>`).join('')}
-      <label class="sel"><span>帧率上限</span><select data-k="fps">
-        <option value="0">跟随显示器</option><option value="30">30</option><option value="60">60</option><option value="120">120</option><option value="144">144</option>
-      </select></label>
+      <div class="fps" role="group" aria-label="帧率上限"><span>帧率上限</span><div class="seg">${[[0, '跟随'], [30], [60], [120], [144]].map(([v, l]) => `
+        <button type="button" data-fps="${v}">${l || v}</button>`).join('')}
+      </div></div>
     </section>
     <section><h3>音效</h3>
       <label class="sl"><span>音量</span><output data-o="sfx"></output><input type="range" min="0" max="1" step=".05" data-k="sfx"></label>
@@ -1777,13 +1782,15 @@ const panel = (() => {
   gear.innerHTML = '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.2"/><path d="M5 2.5v3M10 6.5v3M7 10.5v3" stroke="currentColor" stroke-width="2"/></svg>';
   document.body.append(el, gear);
 
-  const toggle = (open = el.hidden) => { el.hidden = !open; gear.setAttribute('aria-expanded', String(open)); if (open) el.querySelector('button, input')?.focus(); };
+  // 只有键盘打开时才把焦点移进面板；鼠标点开时不动焦点，避免在壁纸宿主里触发多余的输入状态切换
+  const toggle = (open = el.hidden, focus = false) => { el.hidden = !open; gear.setAttribute('aria-expanded', String(open)); if (open && focus) el.querySelector('button, input')?.focus(); };
   gear.addEventListener('click', () => toggle());
   el.addEventListener('click', (e) => {
     const t = e.target.closest('button');
     if (!t) return;
     if (t.dataset.close != null) toggle(false);
     if (t.dataset.theme) applySettings({ theme: t.dataset.theme });
+    if (t.dataset.fps != null) applySettings({ fps: +t.dataset.fps });
     if (t.dataset.reset != null) applySettings({ ...DEFAULTS });
   });
   el.addEventListener('input', (e) => {
@@ -1795,7 +1802,7 @@ const panel = (() => {
   el.addEventListener('keydown', (e) => { if (e.key === 'Escape') toggle(false); e.stopPropagation(); });
   addEventListener('keydown', (e) => {
     const k = e.key.toLowerCase();
-    if (k === 'p') toggle();
+    if (k === 'p') toggle(el.hidden, true);
     else if (k === 'escape') toggle(false);
     else if (k === 't') { const names = Object.keys(THEMES); applySettings({ theme: names[(names.indexOf(themeName) + 1) % names.length] }); }
     else if (k === 'f') applySettings({ fx: !cfg.fx });
@@ -1811,6 +1818,7 @@ const panel = (() => {
       }
       for (const o of el.querySelectorAll('[data-o]')) o.textContent = Math.round(cfg[o.dataset.o] * 100) + '%';
       for (const b of el.querySelectorAll('[data-theme]')) b.setAttribute('aria-pressed', String(b.dataset.theme === themeName));
+      for (const b of el.querySelectorAll('[data-fps]')) b.setAttribute('aria-pressed', String(+b.dataset.fps === cfg.fps));
       el.querySelector('[data-k="fx"]').disabled = !window.hudFx;
       for (const k of ['curve', 'glow', 'scan']) el.querySelector(`[data-k="${k}"]`).disabled = !window.hudFx || !cfg.fx;
     },
@@ -1821,7 +1829,7 @@ const panel = (() => {
 function themeCss() {
   const r = document.documentElement.style;
   for (const k of ['fg', 'dim', 'line', 'hot', 'cool', 'mark']) r.setProperty(`--hud-${k}`, C[k]);
-  r.setProperty('--hud-bg', alpha(C.bg, .9));
+  r.setProperty('--hud-bg', alpha(C.bg, .96));
 }
 
 function applySettings(patch = {}, save = true) {
