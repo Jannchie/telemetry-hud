@@ -73,9 +73,21 @@
 				"step" : 0.05,
 				"condition" : "fx.value == true"
 			},
-			"sfx" :
+			"parallax" :
 			{
 				"order" : 6,
+				"text" : "Mouse parallax",
+				"type" : "slider",
+				"value" : 0.5,
+				"min" : 0,
+				"max" : 1,
+				"fraction" : true,
+				"precision" : 2,
+				"step" : 0.05
+			},
+			"sfx" :
+			{
+				"order" : 7,
 				"text" : "Sound volume",
 				"type" : "slider",
 				"value" : 0.35,
@@ -87,7 +99,7 @@
 			},
 			"hum" :
 			{
-				"order" : 7,
+				"order" : 8,
 				"text" : "Ambient hum",
 				"type" : "bool",
 				"value" : true

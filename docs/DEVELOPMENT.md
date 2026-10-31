@@ -29,6 +29,7 @@ python -m http.server 5174 -d hud
 | `theme=` | `ember` / `glacier` / `phosphor` / `classic` |
 | `fx=0` | 关闭后处理 |
 | `curve=` `glow=` `scan=` `sfx=` | 后处理强度与音量（0–1.5） |
+| `parallax=` | 鼠标视差强度（0–1，0 关闭，默认 0.5） |
 | `hum=0` | 关闭环境底噪 |
 | `fps=` | 帧率上限，0 为跟随显示器 |
 | `bottom=` | 屏幕底部预留高度（设计坐标，默认 80） |

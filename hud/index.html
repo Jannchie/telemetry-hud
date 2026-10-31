@@ -260,11 +260,11 @@ window.livelySystemInformation = (json) => {
 window.wallpaperPropertyListener = {
   applyGeneralProperties(p) { if (p.fps != null) fpsCap = p.fps; },
   // 在 WE 编辑器里添加一个名为 theme 的组合框属性，值为 ember / glacier / phosphor / classic
-  // WE 用户属性：theme（组合框）、glow / scan / curve / sfx（滑块）、hum / fx（复选框），与控制面板共用一套设置
+  // WE 用户属性：theme（组合框）、glow / scan / curve / parallax / sfx（滑块）、hum / fx（复选框），与控制面板共用一套设置
   applyUserProperties(p) {
     const patch = {};
     if (p.theme) patch.theme = p.theme.value;
-    for (const k of ['glow', 'scan', 'curve', 'sfx']) if (p[k]) patch[k] = +p[k].value;
+    for (const k of ['glow', 'scan', 'curve', 'parallax', 'sfx']) if (p[k]) patch[k] = +p[k].value;
     if (p.hum) patch.hum = !!p.hum.value;
     if (p.fx) patch.fx = !!p.fx.value;
     applySettings(patch);
@@ -677,7 +677,7 @@ function tagLine(tag, msg, x, y, alpha, shown = Infinity) {
 function drawLog(log, y0, dir, now, slant = 0) {
   const fade = [1, .5, .26];
   log.lines.forEach((L, i) => {
-    tagLine(L.tag, L.msg, i * slant, y0 * dir + dir * i * 17, fade[i], Math.floor((now - L.t) * 80));
+    depth(i * Z1, () => tagLine(L.tag, L.msg, i * slant, y0 * dir + dir * i * 17, fade[i], Math.floor((now - L.t) * 80)));
   });
 }
 function pathLabel(P, u, off, str, font, color, alpha = 1, ls = 0) {
@@ -1075,12 +1075,14 @@ function timeTrack(P, k) {
   dot(q.x, q.y, 2.5, C.mark);
   ctx.globalAlpha = .3 + .5 * pulse; ring(q.x, q.y, 6, C.mark, 1); ctx.globalAlpha = 1;
   txt(main, tx, baseY + 42, `15px ${F.mono}`, C.fg, al);
-  txt(sub, tx, baseY + 58, `9px ${F.mono}`, C.cool, al);
   // 进度细线：和时间轴同向，从外侧往中心填充
   const bw = 140, by = baseY + 66, x0 = k ? tx + bw : tx - bw, x1 = x0 + (k ? -bw : bw) * f;
-  seg(x0, by, tx, by, C.line, 1);
-  seg(x0, by, x1, by, C.cool, 1.5);
-  seg(x1, by - 2, x1, by + 2, C.cool, 1);
+  depth(Z1, () => {
+    txt(sub, tx, baseY + 58, `9px ${F.mono}`, C.cool, al);
+    seg(x0, by, tx, by, C.line, 1);
+    seg(x0, by, x1, by, C.cool, 1.5);
+    seg(x1, by - 2, x1, by + 2, C.cool, 1);
+  });
 }
 function horizon(k, now) {
   const P = G.H[k];
@@ -1128,7 +1130,7 @@ function core(t, now) {
   ];
   for (const [x, label, v, sub] of triad) {
     const ak = label.toLowerCase(), al = ALERTS[ak].on, acol = al ? ALERT_DEF[ak].color() : null;
-    txt(label, x, 509, `600 8px ${F.ui}`, al ? acol : C.dim, 'center', 1, 3);
+    depth(Z1, () => txt(label, x, 509, `600 8px ${F.ui}`, al ? acol : C.dim, 'center', 1, 3));
     if (al) {
       // 告警：数字四角的方括号随呼吸闪动
       ctx.globalAlpha = .45 + .45 * Math.sin(now * 6);
@@ -1141,8 +1143,10 @@ function core(t, now) {
     }
     if (v == null) glitchText('--', x, 535, `22px ${F.mono}`, 'center');
     else odo(x, 535, v, 3, 0, 24, al ? acol : v >= 85 ? C.hot : C.fg, 'center', false);
-    if (sub == null) glitchText('NO SIG', x, 559, `9px ${F.mono}`, 'center');
-    else txt(sub, x, 559, `9px ${F.mono}`, C.dim, 'center');
+    depth(Z2, () => {
+      if (sub == null) glitchText('NO SIG', x, 559, `9px ${F.mono}`, 'center');
+      else txt(sub, x, 559, `9px ${F.mono}`, C.dim, 'center');
+    });
   }
   // 总体状态：小字放在透镜下方
   // 状态行：圆点 + 文字作为一个整体，按实际宽度居中在中轴上
@@ -1185,9 +1189,11 @@ function core(t, now) {
     : src === 'SIM' ? `${word}   ·   演示数据` : `${word}   ·   未连接数据服务`;
   ctx.font = `11px ${F.mono}`;
   const lw = ctx.measureText(line).width, lx = 960 - lw / 2 + 6, dc = live ? C.cool : src === 'SIM' ? C.mark : C.hot;
-  dot(lx - 10, 150, 3, dc);
-  if (!live) { ctx.globalAlpha = .35 + .35 * Math.sin(t * 2.5); ring(lx - 10, 150, 6, dc, 1); ctx.globalAlpha = 1; }
-  txt(line, lx, 150, `11px ${F.mono}`, live ? C.dim : dc);
+  depth(Z1, () => {
+    dot(lx - 10, 150, 3, dc);
+    if (!live) { ctx.globalAlpha = .35 + .35 * Math.sin(t * 2.5); ring(lx - 10, 150, 6, dc, 1); ctx.globalAlpha = 1; }
+    txt(line, lx, 150, `11px ${F.mono}`, live ? C.dim : dc);
+  });
 
   seg(960, 600, 960, 790, C.line, 1.25);
   ring(960, 800, 4, C.fg, 1.25);
@@ -1238,9 +1244,11 @@ function leader(x, y, P, off, ua = U.s0, ub = U.s1, stub = 22) {
     if (!best || score < best.score) best = { score, bx, by, ex: bx + nx * d, ey: y };
   }
   if (!best) return;
+  // 读数在视差近层，挂到骨架的那一端钉回骨架层
+  const [bx, by] = pin(best.bx, best.by);
   ctx.strokeStyle = alpha(C.dim, .6); ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(best.bx, best.by); ctx.lineTo(best.ex, best.ey); ctx.lineTo(x, y); ctx.stroke();
-  dot(best.bx, best.by, 2, C.dim);
+  ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(best.ex, best.ey); ctx.lineTo(x, y); ctx.stroke();
+  dot(bx, by, 2, C.dim);
 }
 // 硬件名称去掉商标符号、代号前缀和频率后缀，例如 "12th Gen Intel(R) Core(TM) i9-12900K" → "Intel Core i9-12900K"
 const cleanName = (n) => String(n || '')
@@ -1274,12 +1282,13 @@ function specBlock(k) {
   ctx.textBaseline = 'alphabetic';
   rows.forEach(([key, val], i) => {
     const y = y0 + i * rowH + 4;
-    txt(key, outer, y, `600 9px ${F.ui}`, C.dim, oa, 1, 2);
-    txt(val, inner, y, `11px ${F.mono}`, C.fg, ia, .85);
+    depth(Z2, () => txt(key, outer, y, `600 9px ${F.ui}`, C.dim, oa, 1, 2));
+    depth(Z1, () => txt(val, inner, y, `11px ${F.mono}`, C.fg, ia, .85));
   });
   ctx.textBaseline = 'middle';
-  seg(hang, y0 - 15, hang, 276, C.line, 1);
-  dot(hang, 280, 2.5, C.dim);
+  // 表格在视差近层，挂线下端钉回冠线
+  seg(hang, y0 - 15, ...pin(hang, 276), C.line, 1);
+  dot(...pin(hang, 280), 2.5, C.dim);
 }
 // 路径上最接近给定 x 的位置（用于日志等左对齐元素在单调折线上的定位）
 function uAtX(P, x) {
@@ -1313,7 +1322,7 @@ function legend(items) {
   ctx.textBaseline = 'alphabetic';
   for (const q of parts) {
     ctx.fillStyle = q.c; ctx.fillRect(cx, base - 6, 6, 6);
-    txt(q.l, cx + 10, base, `600 9px ${F.ui}`, C.dim, 'left', 1, 1.5);
+    depth(Z1, () => txt(q.l, cx + 10, base, `600 9px ${F.ui}`, C.dim, 'left', 1, 1.5));
     txt(q.v, cx + 16 + q.lw, base, `11px ${F.mono}`, C.fg);
     cx += q.w + gap;
   }
@@ -1334,21 +1343,25 @@ function dimm(x, y, w, mod) {
   const ok = !mod.status || /^ok$/i.test(mod.status), sc = ok ? C.cool : C.hot;
   // "Controller0-DIMMA1" → "DIMM A1"
   const slot = String(mod.slot || mod.bank || 'DIMM').replace(/^.*?-(?=DIMM)/i, '').replace(/^(DIMM)_?([A-Z]\d+)$/i, '$1 $2');
-  txt(slot.toUpperCase(), l, rows[0], `600 9px ${F.ui}`, C.dim, 'left', 1, 1.5);
   const st = ok ? 'OK' : String(mod.status).toUpperCase().slice(0, 8);
-  ctx.font = `9px ${F.mono}`;
-  dot(r - ctx.measureText(st).width - 7, rows[0] - 3, 2.5, sc);
-  txt(st, r, rows[0], `9px ${F.mono}`, sc, 'right');
-  txt(`${mod.capacity} GB`, l, rows[1], `17px ${F.mono}`, C.fg);
   const spd = mod.type ? `${mod.type}${mod.speed ? '-' + mod.speed : ''}` : mod.speed ? `${mod.speed} MT/s` : '';
-  txt(spd, r, rows[1], `10px ${F.mono}`, C.mark, 'right');
-  ctx.font = `10px ${F.ui}`;
-  txt(fit([mod.manufacturer, mod.partNumber].filter(Boolean).join(' '), w), l, rows[2], `10px ${F.ui}`, C.fg, 'left', .85);
+  txt(`${mod.capacity} GB`, l, rows[1], `17px ${F.mono}`, C.fg);
+  depth(Z1, () => {
+    txt(slot.toUpperCase(), l, rows[0], `600 9px ${F.ui}`, C.dim, 'left', 1, 1.5);
+    ctx.font = `9px ${F.mono}`;
+    dot(r - ctx.measureText(st).width - 7, rows[0] - 3, 2.5, sc);
+    txt(st, r, rows[0], `9px ${F.mono}`, sc, 'right');
+    txt(spd, r, rows[1], `10px ${F.mono}`, C.mark, 'right');
+    ctx.font = `10px ${F.ui}`;
+    txt(fit([mod.manufacturer, mod.partNumber].filter(Boolean).join(' '), w), l, rows[2], `10px ${F.ui}`, C.fg, 'left', .85);
+  });
   const tail = [mod.configuredSpeed && mod.configuredSpeed !== mod.speed ? `@${mod.configuredSpeed}` : '', mod.voltage ? `${(+mod.voltage).toFixed(2)}V` : ''].filter(Boolean).join(' ');
   ctx.font = `9px ${F.mono}`;
   const tw = tail ? ctx.measureText(tail).width + 8 : 0;
-  txt(fit(`SN ${mod.serial || '—'}`, w - tw), l, rows[3], `9px ${F.mono}`, C.dim);
-  if (tail) txt(tail, r, rows[3], `9px ${F.mono}`, C.dim, 'right');
+  depth(Z2, () => {
+    txt(fit(`SN ${mod.serial || '—'}`, w - tw), l, rows[3], `9px ${F.mono}`, C.dim);
+    if (tail) txt(tail, r, rows[3], `9px ${F.mono}`, C.dim, 'right');
+  });
   ctx.textBaseline = 'middle';
 }
 function memPanel() {
@@ -1488,58 +1501,68 @@ function cells() {
   dot(896, 338, 3.5, C.mark);
   txt('CPU', 906, 339, `600 11px ${F.ui}`, C.fg, 'left', 1, 2);
   loadChart(754, 364, 180, 66, cpuHist, false);
-  if (S.f == null) glitchText('CLK NO SIG', 934, 446, `11px ${F.mono}`, 'right');
-  else txt(`${S.f.toFixed(2)} GHz`, 934, 446, `12px ${F.mono}`, C.dim, 'right');
+  depth(Z1, () => {
+    if (S.f == null) glitchText('CLK NO SIG', 934, 446, `11px ${F.mono}`, 'right');
+    else txt(`${S.f.toFixed(2)} GHz`, 934, 446, `12px ${F.mono}`, C.dim, 'right');
+  });
   const pa = coreAvg('P'), ea = coreAvg('E');
-  if (ea != null && pa != null) {
+  if (ea != null && pa != null) depth(Z2, () => {
     txt(`P ${pct(pa)}`, 870, 464, `12px ${F.mono}`, C.cool, 'right');
     txt(`E ${pct(ea)}`, 934, 464, `12px ${F.mono}`, C.fg, 'right', .6);
-  }
+  });
   // GPU
   leader(1030, 338, G.A[1], 27);
   dot(1024, 338, 3.5, C.mark);
   txt('GPU', 1014, 339, `600 11px ${F.ui}`, C.fg, 'right', 1, 2);
   loadChart(986, 364, 180, 66, gpuHist, true);
-  if (S.gt == null) glitchText('NO SIG', 986, 446, `12px ${F.mono}`);
-  else txt(`${S.gt.toFixed(0)}°C`, 986, 446, `12px ${F.mono}`, C.dim);
-  if (D.gpu.power == null) glitchText('PWR NO SIG', 986, 464, `11px ${F.mono}`);
-  else txt(`${D.gpu.power.toFixed(0)} W`, 986, 464, `12px ${F.mono}`, C.cool);
-  if (D.gpu.clock != null) txt(`${D.gpu.clock.toFixed(2)} GHz`, 1050, 464, `12px ${F.mono}`, C.fg, 'left', .6);
+  depth(Z1, () => {
+    if (S.gt == null) glitchText('NO SIG', 986, 446, `12px ${F.mono}`);
+    else txt(`${S.gt.toFixed(0)}°C`, 986, 446, `12px ${F.mono}`, C.dim);
+  });
+  depth(Z2, () => {
+    if (D.gpu.power == null) glitchText('PWR NO SIG', 986, 464, `11px ${F.mono}`);
+    else txt(`${D.gpu.power.toFixed(0)} W`, 986, 464, `12px ${F.mono}`, C.cool);
+    if (D.gpu.clock != null) txt(`${D.gpu.clock.toFixed(2)} GHz`, 1050, 464, `12px ${F.mono}`, C.fg, 'left', .6);
+  });
   // 存储
   const [u, tt] = diskTotals();
   leader(853, 646, G.B[0], -16);
   dot(858, 646, 3, C.cool);
-  txt('STORAGE', 934, 647, `600 9px ${F.ui}`, C.dim, 'right', 1, 2);
+  depth(Z1, () => txt('STORAGE', 934, 647, `600 9px ${F.ui}`, C.dim, 'right', 1, 2));
   if (tt == null) {
     glitchText('NO SIGNAL', 934, 672, `16px ${F.mono}`, 'right');
-    txt('volume data offline', 934, 694, `10px ${F.ui}`, C.hot, 'right', .7, 1);
+    depth(Z2, () => txt('volume data offline', 934, 694, `10px ${F.ui}`, C.hot, 'right', .7, 1));
   } else {
     txt(`${(u / 1000).toFixed(2)} / ${(tt / 1000).toFixed(1)} TB`, 934, 672, `16px ${F.mono}`, C.fg, 'right');
-    if (ALERTS.disk.on && busiestDisk()) txt(`${busiestDisk().n} ${busiestDisk().busy.toFixed(0)}% busy`, 934, 694, `10px ${F.ui}`, C.fg, 'right', flicker(performance.now() / 1000 + 4), 1);
-    else txt(`${pct(u / tt)} allocated`, 934, 694, `10px ${F.ui}`, C.dim, 'right', 1, 1);
+    depth(Z2, () => {
+      if (ALERTS.disk.on && busiestDisk()) txt(`${busiestDisk().n} ${busiestDisk().busy.toFixed(0)}% busy`, 934, 694, `10px ${F.ui}`, C.fg, 'right', flicker(performance.now() / 1000 + 4), 1);
+      else txt(`${pct(u / tt)} allocated`, 934, 694, `10px ${F.ui}`, C.dim, 'right', 1, 1);
+    });
   }
   // 温度
   const pk = peakTemp();
   leader(1067, 646, G.B[1], -16);
   dot(1062, 646, 3, C.cool);
-  txt('THERMAL', 986, 647, `600 9px ${F.ui}`, C.dim, 'left', 1, 2);
+  depth(Z1, () => txt('THERMAL', 986, 647, `600 9px ${F.ui}`, C.dim, 'left', 1, 2));
   if (pk == null) {
     glitchText('NO SIGNAL', 986, 672, `16px ${F.mono}`);
-    txt('sensor offline', 986, 694, `10px ${F.ui}`, C.hot, 'left', .7, 1);
+    depth(Z2, () => txt('sensor offline', 986, 694, `10px ${F.ui}`, C.hot, 'left', .7, 1));
   } else {
     const hotA = ALERTS.cput.on || ALERTS.gput.on;
     txt(`${pk.toFixed(1)} °C`, 986, 672, `16px ${F.mono}`, hotA ? C.heat : pk >= 85 ? C.hot : pk >= 70 ? C.mark : C.fg, 'left', hotA ? flicker(performance.now() / 1000 + 2) : 1);
-    txt(`peak · ${thermal(pk)}`, 986, 694, `10px ${F.ui}`, C.dim, 'left', 1, 1);
+    depth(Z2, () => txt(`peak · ${thermal(pk)}`, 986, 694, `10px ${F.ui}`, C.dim, 'left', 1, 1));
   }
   // 功耗：只显示真实测量值，缺哪项就那项 NO SIG；不把 CPU + GPU 相加冒充整机功耗
   ctx.textBaseline = 'alphabetic';
-  txt('POWER', 986, 716, `600 9px ${F.ui}`, C.dim, 'left', 1, 2);
   const pw = D.power || {};
-  [['CPU', pw.cpuW], ['GPU', D.gpu.power], ['SYS', pw.systemW]].forEach(([k, v], i) => {
-    const x = 1040 + i * 62;
-    txt(k, x, 716, `600 8px ${F.ui}`, C.dim, 'left', 1, 1);
-    if (v == null) glitchText('--', x + 22, 716, `11px ${F.mono}`);
-    else txt(`${v.toFixed(0)}W`, x + 22, 716, `11px ${F.mono}`, k === 'SYS' ? C.fg : C.cool);
+  depth(Z2, () => {
+    txt('POWER', 986, 716, `600 9px ${F.ui}`, C.dim, 'left', 1, 2);
+    [['CPU', pw.cpuW], ['GPU', D.gpu.power], ['SYS', pw.systemW]].forEach(([k, v], i) => {
+      const x = 1040 + i * 62;
+      txt(k, x, 716, `600 8px ${F.ui}`, C.dim, 'left', 1, 1);
+      if (v == null) glitchText('--', x + 22, 716, `11px ${F.mono}`);
+      else txt(`${v.toFixed(0)}W`, x + 22, 716, `11px ${F.mono}`, k === 'SYS' ? C.fg : C.cool);
+    });
   });
   ctx.textBaseline = 'middle';
 }
@@ -1559,11 +1582,30 @@ void main() { v_uv = p * .5 + .5; gl_Position = vec4(p, 0., 1.); }`;
   const fs = `#version 300 es
 precision highp float;
 uniform sampler2D u_tex;
-uniform float u_t, u_glow, u_scan, u_curve, u_dpr;
+uniform float u_t, u_glow, u_scan, u_curve, u_dpr, u_asp;
+uniform vec2 u_tilt, u_par;
 in vec2 v_uv; out vec4 o;
+// 视差转角：画面是绕中心旋转的平面（先绕 x 轴转 u_tilt.y，再绕 y 轴转 u_tilt.x），相机在 z = -D 处透视观察；
+// 求屏幕像素对应的视线与平面的交点，换回平面内坐标。转角为 0 时是恒等映射
+vec2 tilt(vec2 c) {
+  if (u_tilt == vec2(0.)) return c;
+  const float D = 2.2;
+  float sa = sin(u_tilt.x), ca = cos(u_tilt.x), sb = sin(u_tilt.y), cb = cos(u_tilt.y);
+  vec3 ex = vec3(ca, 0., -sa), ey = vec3(sb * sa, cb, sb * ca), n = vec3(cb * sa, -sb, cb * ca);
+  vec3 o = vec3(0., 0., -D), d = vec3(c.x * u_asp, c.y, D);
+  vec3 p = o + d * (D * n.z / dot(d, n));
+  return vec2(dot(p, ex) / u_asp, dot(p, ey));
+}
+// 骨架的深度场：画面是中心凸起的穹面，中心（透镜与读数）最近 z = 1，屏幕左右边缘最远 z = -1。
+// 视差时按 z 错开采样位置，近处逆着鼠标、远处顺着鼠标移动；深度连续变化，线条不会断开
+vec2 field(vec2 c) {
+  if (u_par == vec2(0.)) return c;
+  float d = min(length(vec2(c.x * u_asp, c.y)) / u_asp, 1.);
+  return c + u_par * cos(3.14159265 * d);
+}
 void main() {
   // 曲面畸变：中心内容缩小、向边缘逐渐拉伸；四边中点贴边，四角轻微裁切，不留黑边
-  vec2 c = v_uv * 2. - 1.;
+  vec2 c = tilt(field(v_uv * 2. - 1.));
   float k = .1 * u_curve, r2 = dot(c, c);
   vec2 cd = c * (1. + k * (1. - r2));
   vec2 uv = vec2(cd.x * .5 + .5, .5 - cd.y * .5);
@@ -1580,6 +1622,9 @@ void main() {
   col += (col * .3 + .01) * band * u_scan;
   // 暗角
   col *= 1. - .2 * u_curve * r2;
+  // 转动后平面边缘以外露出的部分压暗
+  vec2 e = abs(cd);
+  col *= 1. - smoothstep(.995, 1.005, max(e.x, e.y));
   o = vec4(col, 1.);
 }`;
   const sh = (type, src) => {
@@ -1605,7 +1650,7 @@ void main() {
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
   const U = (n) => gl.getUniformLocation(prog, n);
-  const uT = U('u_t'), uGlow = U('u_glow'), uScan = U('u_scan'), uCurve = U('u_curve'), uDpr = U('u_dpr');
+  const uT = U('u_t'), uGlow = U('u_glow'), uScan = U('u_scan'), uCurve = U('u_curve'), uDpr = U('u_dpr'), uAsp = U('u_asp'), uTilt = U('u_tilt'), uPar = U('u_par');
   gl.uniform1i(U('u_tex'), 0);
   document.body.appendChild(c);
   const api = {
@@ -1616,7 +1661,12 @@ void main() {
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, cv);
       gl.generateMipmap(gl.TEXTURE_2D);
       gl.uniform1f(uT, t); gl.uniform1f(uGlow, FX.glow); gl.uniform1f(uScan, FX.scan);
-      gl.uniform1f(uCurve, FX.curve); gl.uniform1f(uDpr, dpr);
+      gl.uniform1f(uCurve, FX.curve); gl.uniform1f(uDpr, dpr); gl.uniform1f(uAsp, c.width / c.height);
+      const r = PAR_DEG * Math.PI / 180 * cfg.parallax;
+      gl.uniform2f(uTilt, PAR.cx * r, PAR.cy * r);
+      // 深度场：设计像素换算到 [-1, 1] 的屏幕坐标；纹理坐标的 y 朝上，所以 y 取反
+      const f = PAR_FIELD * cfg.parallax * s;
+      gl.uniform2f(uPar, PAR.cx * f / (W / 2), -PAR.cy * f / (H / 2));
       gl.drawArrays(gl.TRIANGLES, 0, 3);
     },
   };
@@ -1751,17 +1801,17 @@ const sfx = (() => {
 // 设置保存在 localStorage；网址参数与 Wallpaper Engine 属性优先级更高。右上角按钮或 P 键打开，Esc 关闭。
 const SETTINGS_KEY = 'hud-settings-v1';
 // 默认限 60 FPS：高分屏上满刷新率重绘 + 后处理开销很大，60 帧观感差别不大
-const DEFAULTS = { theme: 'ember', fx: true, curve: .5, glow: 0, scan: .4, sfx: .35, hum: true, fps: 60 };
+const DEFAULTS = { theme: 'ember', fx: true, curve: .5, glow: 0, scan: .4, parallax: .5, sfx: .35, hum: true, fps: 60 };
 const cfg = { ...DEFAULTS };
 try { Object.assign(cfg, JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}')); } catch {}
-for (const k of ['curve', 'glow', 'scan', 'sfx', 'fps']) if (params.get(k) != null) cfg[k] = +params.get(k);
+for (const k of ['curve', 'glow', 'scan', 'parallax', 'sfx', 'fps']) if (params.get(k) != null) cfg[k] = +params.get(k);
 if (params.get('theme')) cfg.theme = params.get('theme');
 if (params.get('fx') === '0') cfg.fx = false;
 if (params.get('hum') === '0') cfg.hum = false;
 
 const panel = (() => {
   const sliders = [
-    ['curve', '曲率', 0, 1.5], ['glow', '辉光', 0, 1.5], ['scan', '扫描线', 0, 1],
+    ['curve', '曲率', 0, 1.5], ['glow', '辉光', 0, 1.5], ['scan', '扫描线', 0, 1], ['parallax', '视差', 0, 1],
   ];
   const el = document.createElement('div');
   el.id = 'hud-panel'; el.hidden = true;
@@ -2086,10 +2136,56 @@ function update(dt, now) {
   }
 }
 
+// ---------- 视差：画面随鼠标位置微微转动，各层有深度差 ----------
+// 相机朝鼠标方向绕中心转动：近层（读数）反向平移，远层（背景点阵）同向平移，骨架层不动保持像素对齐；
+// 整体透视转角在后处理里做。鼠标 3 秒不动或离开窗口时缓慢回正。强度 cfg.parallax（0 关闭）。
+const PAR = { mx: 0, my: 0, last: -1e9, cx: 0, cy: 0, x: 0, y: 0 };
+// 强度为 1 时：近层的最大平移、骨架深度场中心与边缘各自的最大平移（设计像素），以及整体最大转角
+const PAR_PX = 20, PAR_FIELD = 16, PAR_DEG = 3;
+addEventListener('mousemove', (e) => {
+  PAR.mx = Math.max(-1, Math.min(1, e.clientX / W * 2 - 1));
+  PAR.my = Math.max(-1, Math.min(1, e.clientY / H * 2 - 1));
+  PAR.last = performance.now() / 1000;
+});
+document.documentElement.addEventListener('mouseleave', () => { PAR.last = -1e9; });
+function parallaxStep(dt, now) {
+  const idle = now - PAR.last > 3, k = 1 - Math.exp(-dt * (idle ? 1.2 : 4));
+  PAR.cx += ((idle ? 0 : PAR.mx) - PAR.cx) * k;
+  PAR.cy += ((idle ? 0 : PAR.my) - PAR.cy) * k;
+  if (Math.abs(PAR.cx) < 1e-4 && Math.abs(PAR.cy) < 1e-4) PAR.cx = PAR.cy = 0;
+  PAR.x = PAR.cx * PAR_PX * cfg.parallax; PAR.y = PAR.cy * PAR_PX * cfg.parallax;
+}
+// 当前层相对骨架层的平移；pin 把骨架层上的点换算到当前层坐标，用于跨层的连线
+const LAYER = { x: 0, y: 0 };
+const pin = (x, y) => [x - LAYER.x, y - LAYER.y];
+// 多行文本的主次分层：主读数 / 标题为 0，次要行 Z1，说明与第三行 Z2，日志越旧越靠后。
+// 在当前坐标系（可能已沿路径旋转）里按相对深度 z 做视差平移后绘制，z < 0 更靠后
+// 组内只做轻微错位，层次感主要来自组与组之间（穹面深度场、近层）
+const Z1 = -.12, Z2 = -.25;
+function depth(z, fn) {
+  if (!z || (!PAR.x && !PAR.y)) { fn(); return; }
+  const m = ctx.getTransform(), k = -z * dpr * s, dx = PAR.x * k, dy = PAR.y * k, det = m.a * m.d - m.b * m.c;
+  ctx.save(); ctx.translate((m.d * dx - m.c * dy) / det, (m.a * dy - m.b * dx) / det);
+  fn();
+  ctx.restore();
+}
+function layer(z, fn) {
+  const x = -PAR.x * z, y = -PAR.y * z;
+  if (!x && !y) { fn(); return; }
+  ctx.save(); ctx.translate(x, y); LAYER.x = x; LAYER.y = y;
+  fn();
+  ctx.restore(); LAYER.x = LAYER.y = 0;
+}
+
 function draw(t, now) {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   // 窗口尺寸为 0 时（最小化、隐藏）背景层也是 0 尺寸，drawImage 会抛错
-  if (bgLayer.width && bgLayer.height) ctx.drawImage(bgLayer, 0, 0);
+  if (bgLayer.width && bgLayer.height) {
+    // 背景点阵是远层，和鼠标同向移动；露出的边缘用暗角的边缘色补上
+    const bx = PAR.x * .4 * dpr * s, by = PAR.y * .4 * dpr * s;
+    if (bx || by) { ctx.fillStyle = C.bg1; ctx.fillRect(0, 0, cv.width, cv.height); }
+    ctx.drawImage(bgLayer, bx, by);
+  }
   ctx.setTransform(dpr * s, 0, 0, dpr * s, dpr * ox, dpr * oy);
   ctx.textBaseline = 'middle';
   ctx.lineCap = 'butt'; ctx.lineJoin = 'round';
@@ -2112,8 +2208,8 @@ function draw(t, now) {
   }
   staged('keel', now, keel);
   staged('core', now, () => core(t, now));
-  staged('spec', now, () => { specBlock(0); specBlock(1); });
-  staged('cells', now, cells);
+  layer(1, () => staged('spec', now, () => { specBlock(0); specBlock(1); }));
+  layer(1, () => staged('cells', now, cells));
   staged('mem', now, memPanel);
 
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -2128,6 +2224,7 @@ function frame(ts) {
   const dt = Math.min(.1, Math.max(0, (ts - last) / 1000)); last = ts;
   const now = ts / 1000;
   update(dt, now);
+  parallaxStep(dt, now);
   draw(now, now);
   if (window.hudFx && window.hudFx.on) window.hudFx.render(now);
   fpsFrames++;
