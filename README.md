@@ -60,7 +60,7 @@ The helper picks it up automatically within about 15 seconds. LibreHardwareMonit
 
 ## Settings
 
-- **Wallpaper Engine properties**: theme, post-processing, curvature, glow, scanlines, volume, ambient hum.
+- **Wallpaper Engine properties**: theme, post-processing, curvature, glow, scanlines, mouse parallax, volume, ambient hum.
 - **In-wallpaper panel**: click the button in the top-right corner. Settings are saved and take effect immediately, but the Wallpaper Engine properties override them each time the wallpaper loads.
 - **Standalone**: right-click the tray icon and choose **Settings**. The panel opens in its own window, and every change shows on the desktop right away.
 
