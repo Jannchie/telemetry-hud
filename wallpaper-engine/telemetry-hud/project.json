@@ -52,7 +52,7 @@
 				"order" : 4,
 				"text" : "Glow",
 				"type" : "slider",
-				"value" : 0.7,
+				"value" : 0,
 				"min" : 0,
 				"max" : 1.5,
 				"fraction" : true,

@@ -1535,7 +1535,7 @@ function cells() {
 // 2D 画布照常绘制，每帧作为纹理交给 WebGL2 做一次全屏后处理；不支持 WebGL2 或 ?fx=0 时直接显示 2D 画布。
 // 强度参数：?glow= ?scan= ?curve=（0 关闭，1 为默认强度的上限附近），WE 用户属性同名。
 function fxNum(k, d) { const v = params.get(k); return v == null ? d : +v; }
-const FX = { glow: fxNum('glow', .7), scan: fxNum('scan', .4), curve: fxNum('curve', .5) };
+const FX = { glow: fxNum('glow', 0), scan: fxNum('scan', .4), curve: fxNum('curve', .5) };
 function createFx() {
   const c = document.createElement('canvas');
   const gl = c.getContext('webgl2', { alpha: false, antialias: false, depth: false, stencil: false });
@@ -1738,7 +1738,7 @@ const sfx = (() => {
 // 设置保存在 localStorage；网址参数与 Wallpaper Engine 属性优先级更高。右上角按钮或 P 键打开，Esc 关闭。
 const SETTINGS_KEY = 'hud-settings-v1';
 // 默认限 60 FPS：高分屏上满刷新率重绘 + 后处理开销很大，60 帧观感差别不大
-const DEFAULTS = { theme: 'ember', fx: true, curve: .5, glow: .7, scan: .4, sfx: .35, hum: true, fps: 60 };
+const DEFAULTS = { theme: 'ember', fx: true, curve: .5, glow: 0, scan: .4, sfx: .35, hum: true, fps: 60 };
 const cfg = { ...DEFAULTS };
 try { Object.assign(cfg, JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}')); } catch {}
 for (const k of ['curve', 'glow', 'scan', 'sfx', 'fps']) if (params.get(k) != null) cfg[k] = +params.get(k);
@@ -2072,7 +2072,8 @@ function update(dt, now) {
 
 function draw(t, now) {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.drawImage(bgLayer, 0, 0);
+  // 窗口尺寸为 0 时（最小化、隐藏）背景层也是 0 尺寸，drawImage 会抛错
+  if (bgLayer.width && bgLayer.height) ctx.drawImage(bgLayer, 0, 0);
   ctx.setTransform(dpr * s, 0, 0, dpr * s, dpr * ox, dpr * oy);
   ctx.textBaseline = 'middle';
   ctx.lineCap = 'butt'; ctx.lineJoin = 'round';
