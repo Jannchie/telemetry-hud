@@ -10,10 +10,11 @@ const version = readFileSync(resolve('helper/Cargo.toml'), 'utf8').match(/^versi
 for (const dir of [PKG, ...process.argv.slice(2).map(p => resolve(p))]) {
   mkdirSync(dir, { recursive: true });
   if (dir !== PKG) {
-    // 上传创意工坊后 WE 会在目标目录的 project.json 里记下 workshopid 等字段，覆盖时保留，否则下次更新会被当成新作品发布
+    // 上传创意工坊后 WE 会在目标目录的 project.json 里记下 workshopid、visibility、评级、version 等字段，覆盖时保留：
+    // 丢了 workshopid 下次更新会被当成新作品发布，visibility 被仓库里的 private 覆盖则会把已公开的作品改回私密
     const dst = join(dir, 'project.json');
-    const keep = existsSync(dst) ? Object.entries(JSON.parse(readFileSync(dst, 'utf8').replace(/^﻿/, ''))).filter(([k]) => k.startsWith('workshop')) : [];
     const pj = JSON.parse(readFileSync(join(PKG, 'project.json'), 'utf8'));
+    const keep = existsSync(dst) ? Object.entries(JSON.parse(readFileSync(dst, 'utf8').replace(/^﻿/, ''))).filter(([k]) => !(k in pj) || k === 'visibility') : [];
     writeFileSync(dst, JSON.stringify({ ...pj, ...Object.fromEntries(keep) }, null, '\t'));
     for (const f of ['preview.jpg', 'README.md']) cpSync(join(PKG, f), join(dir, f));
   }
