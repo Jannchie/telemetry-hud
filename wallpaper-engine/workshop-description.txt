@@ -1,0 +1,44 @@
+[h1]Telemetry HUD[/h1]
+A cyberpunk system-monitor wallpaper that shows [b]live data from your own PC[/b]: CPU (P-cores / E-cores), GPU, every memory module, every disk, network, motherboard slots and power draw.
+
+[h2]⚠ Requires a small helper program[/h2]
+Wallpaper Engine can't read hardware sensors, so the data comes from a tiny local helper.
+[list]
+[*][b]Download:[/b] [url=https://github.com/Jannchie/telemetry-hud/releases/latest/download/hud-telemetry.exe]hud-telemetry.exe[/url] (about 600 KB, open source)
+[*]Double-click it once. It installs itself, starts when you sign in (no admin rights needed) and runs in the background.
+[*]To uninstall, double-click it again and choose "Yes".
+[*]Windows SmartScreen may warn on first run because the exe isn't code-signed: click "More info" → "Run anyway".
+[/list]
+Without the helper the wallpaper still runs, but every panel shows [b]NO SIGNAL[/b]. It never shows made-up numbers.
+The helper only listens on 127.0.0.1, never connects to the internet, and sends nothing anywhere.
+
+[h2]Features[/h2]
+[list]
+[*]CPU / GPU load, clocks, temperatures and power
+[*]Memory breakdown, plus a card for each DIMM and empty slot
+[*]Per-disk read/write, busy time, free space and drive health (NVMe / SSD / HDD drawn differently)
+[*]PCIe / M.2 slots and the devices in them
+[*]Alerts with their own colors and sounds: saturated CPU / GPU / memory, overheating, disk bottlenecks, network surges
+[*]Staged boot animation, synthesized sound effects, scanline / curvature post-processing, 4 color themes
+[/list]
+
+[h2]CPU temperature (optional)[/h2]
+Windows doesn't expose the CPU temperature to normal programs. Run [url=https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/releases]LibreHardwareMonitor[/url] as administrator and enable Options → Remote Web Server → Run (port 8085). The helper picks it up automatically.
+
+Source code, details and issues: [url=https://github.com/Jannchie/telemetry-hud]github.com/Jannchie/telemetry-hud[/url]
+
+[hr][/hr]
+
+[h2]中文[/h2]
+赛博朋克风格的系统监控壁纸，显示你自己电脑的实时数据：CPU（大小核）、GPU、每根内存条、每块硬盘、网络、主板插槽和功耗。
+
+[b]需要一个小 helper 程序：[/b]下载 [url=https://github.com/Jannchie/telemetry-hud/releases/latest/download/hud-telemetry.exe]hud-telemetry.exe[/url]，双击一次即可。它会自动安装、设为开机自启（不需要管理员权限）并在后台运行；再双击一次可以卸载。没有代码签名，SmartScreen 拦截时点“更多信息 → 仍要运行”。
+不装 helper 时所有面板显示 NO SIGNAL，绝不显示编造的数字。helper 只监听 127.0.0.1，不联网，不上传任何数据。
+CPU 温度需要以管理员身份运行 LibreHardwareMonitor，并打开 Options → Remote Web Server → Run（端口 8085）。
+
+[h2]日本語[/h2]
+自分の PC のリアルタイムデータを表示するサイバーパンク風のシステムモニター壁紙です。CPU（P コア / E コア）、GPU、メモリモジュール、各ドライブ、ネットワーク、マザーボードのスロット、消費電力に対応しています。
+
+[b]小さなヘルパープログラムが必要です：[/b][url=https://github.com/Jannchie/telemetry-hud/releases/latest/download/hud-telemetry.exe]hud-telemetry.exe[/url] をダウンロードして一度ダブルクリックするだけです。自動でインストールされ、サインイン時に自動起動し（管理者権限は不要）、バックグラウンドで動作します。もう一度ダブルクリックするとアンインストールできます。コード署名がないため、SmartScreen が表示されたら「詳細情報 → 実行」をクリックしてください。
+ヘルパーがない場合、すべてのパネルは NO SIGNAL になり、でっち上げた数値は表示しません。ヘルパーは 127.0.0.1 でのみ待ち受け、外部への通信は一切行いません。
+CPU 温度を表示するには、LibreHardwareMonitor を管理者として実行し、Options → Remote Web Server → Run（ポート 8085）を有効にしてください。
