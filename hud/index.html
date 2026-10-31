@@ -1036,6 +1036,8 @@ function decor() {
 const WEEK = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
 const MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
 const pad2 = (n) => String(n).padStart(2, '0');
+// 进度百分比向下截断，避免午夜 / 年末前几秒就四舍五入成 100%
+const floorPct = (f, n) => (Math.floor(f * 100 * 10 ** n) / 10 ** n).toFixed(n);
 function timeTrack(P, k) {
   const d = new Date();
   let f, ticks, main, sub;
@@ -1043,17 +1045,19 @@ function timeTrack(P, k) {
     f = (d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds() + d.getMilliseconds() / 1000) / 86400;
     ticks = Array.from({ length: 25 }, (_, i) => [i / 24, i % 6 === 0 && i < 24 ? pad2(i) : null, i % 6 === 0]);
     main = `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
-    sub = `DAY ${(f * 100).toFixed(2)}%`;
+    sub = `DAY ${floorPct(f, 2)}%`;
   } else {
     const y = d.getFullYear(), a = new Date(y, 0, 1), b = new Date(y + 1, 0, 1), len = b - a;
     f = (d - a) / len;
     ticks = Array.from({ length: 13 }, (_, m) => [(new Date(y, m, 1) - a) / len, m < 12 ? MONTHS[m] : null, true]);
     main = `${y}.${pad2(d.getMonth() + 1)}.${pad2(d.getDate())} ${WEEK[d.getDay()]}`;
-    sub = `YEAR ${(f * 100).toFixed(4)}% · D${Math.floor((d - a) / 864e5) + 1}`;
+    sub = `YEAR ${floorPct(f, 4)}% · D${Math.floor((d - a) / 864e5) + 1}`;
   }
-  const at = (x) => P.at(1 - x);
+  // 时间轴只占台阶外侧的水平段：终点落在地平线下折的台阶处（x = 634），不延伸到通往中心的短线
+  const u0 = uAtX(P, k ? 1920 - 634 : 634), uOf = (x) => u0 + (1 - u0) * (1 - x);
+  const at = (x) => P.at(uOf(x));
   // 已过去的部分
-  ctx.globalAlpha = .6; stroke(P, 1 - f, 1, C.fg, 1.5); ctx.globalAlpha = 1;
+  ctx.globalAlpha = .6; stroke(P, uOf(f), 1, C.fg, 1.5); ctx.globalAlpha = 1;
   // 刻度
   ctx.strokeStyle = C.line; ctx.lineWidth = 1; ctx.beginPath();
   for (const [x, , major] of ticks) { const q = at(x); ctx.moveTo(q.x, q.y + 3); ctx.lineTo(q.x, q.y + (major ? 9 : 5)); }
@@ -1063,16 +1067,20 @@ function timeTrack(P, k) {
   for (const [x, lab] of ticks) if (lab) { const q = at(x); txt(lab, q.x + (k ? -2 : 2), baseY + 16, `8px ${F.mono}`, C.dim, k ? 'right' : 'left', .8); }
   // 标记与读数
   const q = at(f), pulse = .5 + .5 * Math.sin(performance.now() / 400);
-  seg(q.x, q.y - 6, q.x, baseY + 28, C.mark, 1);
+  // 读数固定在时间轴终点下方（避开中间的斜柱），标记沿轴移动，用折线引到读数；走到终点时引线正好是直线
+  const tx = at(1).x, al = k ? 'left' : 'right', ly = baseY + 26;
+  seg(q.x, q.y - 6, q.x, ly, C.mark, 1);
+  seg(q.x, ly, tx, ly, C.mark, 1);
+  seg(tx, ly - 3, tx, ly + 3, C.mark, 1);
   dot(q.x, q.y, 2.5, C.mark);
   ctx.globalAlpha = .3 + .5 * pulse; ring(q.x, q.y, 6, C.mark, 1); ctx.globalAlpha = 1;
-  // 读数优先放在标记外侧（远离中心），外侧放不下时放到内侧
-  ctx.font = `15px ${F.mono}`;
-  const tw = Math.max(ctx.measureText(main).width, 120), out = k ? 1 : -1, edge = k ? ER - 70 : EL + 70;
-  const fitsOut = k ? q.x + 10 + tw <= edge : q.x - 10 - tw >= edge;
-  const side = fitsOut ? out : -out, tx = q.x + side * 10, al = side > 0 ? 'left' : 'right';
-  txt(main, tx, baseY + 40, `15px ${F.mono}`, C.fg, al);
-  txt(sub, tx, baseY + 56, `9px ${F.mono}`, C.cool, al);
+  txt(main, tx, baseY + 42, `15px ${F.mono}`, C.fg, al);
+  txt(sub, tx, baseY + 58, `9px ${F.mono}`, C.cool, al);
+  // 进度细线：和时间轴同向，从外侧往中心填充
+  const bw = 140, by = baseY + 66, x0 = k ? tx + bw : tx - bw, x1 = x0 + (k ? -bw : bw) * f;
+  seg(x0, by, tx, by, C.line, 1);
+  seg(x0, by, x1, by, C.cool, 1.5);
+  seg(x1, by - 2, x1, by + 2, C.cool, 1);
 }
 function horizon(k, now) {
   const P = G.H[k];
