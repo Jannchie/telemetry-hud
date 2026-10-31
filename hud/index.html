@@ -2117,6 +2117,12 @@ function tour() {
     battery: { percent: Math.round(pct), charging: !unplug && pct < 91.5, remainingMin: unplug ? Math.round(pct * 2.6) : null },
   };
   D.board = lost ? null : TOUR_BASE.board;
+  // 视差：传感器恢复后模拟鼠标平滑绕一圈，再回到中心
+  const pz = bump(45.5, 47, 55, 56.5);
+  if (pz > 0) {
+    const a = (T - 45.5) / 11 * TAU;
+    PAR.mx = Math.cos(a) * pz; PAR.my = Math.sin(a) * .7 * pz; PAR.last = performance.now() / 1000;
+  }
   // 结尾段：曲面与辉光平缓起伏一次
   const fx = bump(48, 52, 56, 60);
   FX.curve = cfg.curve + .7 * fx; FX.glow = cfg.glow + .5 * fx;
