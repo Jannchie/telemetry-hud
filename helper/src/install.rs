@@ -20,6 +20,7 @@ const TITLE: &str = "Telemetry HUD";
 const EXE: &str = "hud-telemetry.exe";
 const DETACHED_PROCESS: u32 = 0x0000_0008;
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
 
 /// 按 Windows 显示语言选择提示文本：中文、日文系统用对应语言，其余用英文
 fn tr(en: &'static str, zh: &'static str, ja: &'static str) -> &'static str {
@@ -76,13 +77,19 @@ impl Ctx {
                 SetHandleInformation(GetStdHandle(h), HANDLE_FLAG_INHERIT, 0);
             }
         }
-        Command::new(&self.exe)
-            .arg("--background")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .creation_flags(DETACHED_PROCESS | CREATE_NO_WINDOW)
-            .spawn()
+        // 调用方在 Job 里（IDE / Agent 的终端）时，后台实例默认会留在同一个 Job，终端一关就被连带杀掉；
+        // 所以先尝试脱离 Job，Job 不允许脱离时 CreateProcess 会失败，再退回普通启动
+        let spawn = |flags: u32| {
+            Command::new(&self.exe)
+                .arg("--background")
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .creation_flags(flags)
+                .spawn()
+        };
+        spawn(DETACHED_PROCESS | CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB)
+            .or_else(|_| spawn(DETACHED_PROCESS | CREATE_NO_WINDOW))
             .map(|_| ())
             .map_err(|e| tr("Failed to start: {e}", "启动失败：{e}", "起動に失敗しました：{e}").replace("{e}", &e.to_string()))
     }
