@@ -24,7 +24,12 @@
 					{ "label" : "Ember", "value" : "ember" },
 					{ "label" : "Glacier", "value" : "glacier" },
 					{ "label" : "Phosphor", "value" : "phosphor" },
-					{ "label" : "Classic", "value" : "classic" }
+					{ "label" : "Classic", "value" : "classic" },
+					{ "label" : "Amber", "value" : "amber" },
+					{ "label" : "Synthwave", "value" : "synthwave" },
+					{ "label" : "Sakura", "value" : "sakura" },
+					{ "label" : "Cobalt", "value" : "cobalt" },
+					{ "label" : "Mono", "value" : "mono" }
 				]
 			},
 			"fx" :

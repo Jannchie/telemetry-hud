@@ -19,7 +19,7 @@ The helper only listens on 127.0.0.1, never connects to the internet, and sends 
 [*]Per-disk read/write, busy time, free space and drive health (NVMe / SSD / HDD drawn differently)
 [*]PCIe / M.2 slots and the devices in them
 [*]Alerts with their own colors and sounds: saturated CPU / GPU / memory, overheating, disk bottlenecks, network surges
-[*]Staged boot animation, synthesized sound effects, scanline / curvature post-processing, 4 color themes
+[*]Staged boot animation, synthesized sound effects, scanline / curvature post-processing, 9 color themes
 [/list]
 
 [h2]CPU temperature (optional)[/h2]

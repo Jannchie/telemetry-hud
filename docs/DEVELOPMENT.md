@@ -24,7 +24,7 @@ python -m http.server 5174 -d hud
 | `demo=1` | 随机模拟数据 |
 | `intro=0` | 跳过开屏动画 |
 | `endpoint=` | helper 地址，默认 `http://127.0.0.1:27182/stats` |
-| `theme=` | `ember` / `glacier` / `phosphor` / `classic` |
+| `theme=` | `ember` / `glacier` / `phosphor` / `classic` / `amber` / `synthwave` / `sakura` / `cobalt` / `mono` |
 | `fx=0` | 关闭后处理 |
 | `curve=` `glow=` `scan=` `sfx=` | 后处理强度与音量（0–1.5） |
 | `parallax=` | 鼠标视差强度（0–1，0 关闭，默认 0.5） |
