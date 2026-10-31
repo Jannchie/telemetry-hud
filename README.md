@@ -21,7 +21,7 @@ A cyberpunk system-monitor wallpaper for [Wallpaper Engine](https://www.wallpape
 
 Requires Windows 10/11 (x64) and Wallpaper Engine.
 
-1. **Helper**: download `hud-telemetry.exe` from [Releases](https://github.com/Jannchie/telemetry-hud/releases) and double-click it.
+1. **Helper**: download [`hud-telemetry.exe`](https://github.com/Jannchie/telemetry-hud/releases/latest/download/hud-telemetry.exe) and double-click it.
    It copies itself to `%LOCALAPPDATA%\TelemetryHUD`, starts automatically when you sign in (no administrator rights needed), and runs in the background right away. You can delete the downloaded file afterwards.
    Windows SmartScreen may warn you on first run because the exe isn't code-signed. Click **More info → Run anyway**.
 2. **Wallpaper**: download `telemetry-hud-wallpaper-*.zip` from the same release and unzip it into

@@ -21,7 +21,7 @@
 
 Windows 10/11（x64）と Wallpaper Engine が必要です。
 
-1. **ヘルパー**：[Releases](https://github.com/Jannchie/telemetry-hud/releases) から `hud-telemetry.exe` をダウンロードして、ダブルクリックします。
+1. **ヘルパー**：[`hud-telemetry.exe`](https://github.com/Jannchie/telemetry-hud/releases/latest/download/hud-telemetry.exe) をダウンロードして、ダブルクリックします。
    `%LOCALAPPDATA%\TelemetryHUD` に自分自身をコピーし、サインイン時の自動起動を登録して（管理者権限は不要）、そのままバックグラウンドで動き始めます。ダウンロードしたファイルは削除して構いません。
    exe にはコード署名がないため、初回起動時に Windows SmartScreen の警告が出ることがあります。**詳細情報 → 実行** をクリックしてください。
 2. **壁紙**：同じリリースから `telemetry-hud-wallpaper-*.zip` をダウンロードし、
