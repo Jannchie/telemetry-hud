@@ -1731,7 +1731,7 @@ window.hudFx = params.get('fx') === '0' ? null : createFx();
 const SFX = { vol: fxNum('sfx', .35), hum: params.get('hum') !== '0' };
 const sfx = (() => {
   // offT 不为 null 时处于离线渲染：tone 的起始时间取 offT，而不是实时上下文的当前时间
-  let ac = null, master = null, humNode = null, lastLog = 0, offT = null;
+  let ac = null, master = null, humNode = null, offT = null;
   const ensure = () => {
     if (ac) return ac.state === 'running';
     const AC = window.AudioContext || window.webkitAudioContext;
@@ -1785,13 +1785,6 @@ const sfx = (() => {
     boot,
     // 暂停时挂起音频上下文（底噪随之停止），恢复时继续
     suspend(on) { if (ac) on ? ac.suspend() : ac.resume(); },
-    // 新日志：短促的高频双响，最多每 1.8s 一次，避免长时间运行时过于频繁
-    log(now) {
-      if (now - lastLog < 1.8) return;
-      lastLog = now;
-      const f = 2200 + Math.random() * 600;
-      tone(f, .045, { g: .05 }); tone(f * 1.5, .03, { g: .025, at: .05 });
-    },
     // 状态切换：回到 NOMINAL 为下行双音，ELEVATED 为上行双音，CRITICAL 为三连方波
     status(level) {
       if (level === 'NOMINAL') { tone(988, .16, { g: .07, to: 740 }); tone(659, .22, { g: .06, at: .14 }); }
@@ -1826,8 +1819,8 @@ const sfx = (() => {
     },
     // 离线渲染（导出视频用）：按记录的 [方法名, 参数, 秒] 事件和 [秒, 负载] 底噪曲线，用同一套合成器渲染单声道音轨
     async renderOffline(events, loads, dur, sr = 48000) {
-      const off = new OfflineAudioContext(1, Math.ceil(dur * sr), sr), saved = [ac, master, lastLog];
-      ac = off; lastLog = -1e9;
+      const off = new OfflineAudioContext(1, Math.ceil(dur * sr), sr), saved = [ac, master];
+      ac = off;
       master = off.createGain(); master.gain.value = SFX.vol;
       const delay = off.createDelay(), fb = off.createGain(), wet = off.createGain();
       delay.delayTime.value = .13; fb.gain.value = .3; wet.gain.value = .3;
@@ -1842,7 +1835,7 @@ const sfx = (() => {
       for (const [name, args, t] of events) { offT = t; api[name](...args); }
       offT = null;
       const buf = await off.startRendering();
-      [ac, master, lastLog] = saved;
+      [ac, master] = saved;
       return buf.getChannelData(0);
     },
   };
@@ -2201,8 +2194,8 @@ function update(dt, now) {
     const log = logs[key];
     if (now >= log.next) {
       const [tag, msg] = pick(gens[key])();
+      // 日志每两三秒就有一条，不配提示音，否则会变成持续的“啾啾”声
       log.push(tag, msg, now);
-      sfx.log(now);
       log.next = now + base + Math.random() * 1.8;
     }
   }

@@ -30,8 +30,8 @@ const CLOCK = `(() => {
 // 包装音效方法：导出时不播放，只记录 [方法名, 参数, 虚拟时间]；开机扫频音在页面里由定时器触发，这里按 0.3 秒补一条
 const HOOK_SFX = `(() => {
   window.__sfxEv = [['boot', [], 0.3]]; window.__loads = []; window.__sfxOrig = {};
-  for (const k of ['log', 'status', 'stage', 'alert', 'mount', 'land', 'update']) __sfxOrig[k] = sfx[k];
-  for (const k of ['log', 'status', 'stage', 'alert', 'mount', 'land']) sfx[k] = (...a) => { __sfxEv.push([k, a, performance.now() / 1000]); };
+  for (const k of ['status', 'stage', 'alert', 'mount', 'land', 'update']) __sfxOrig[k] = sfx[k];
+  for (const k of ['status', 'stage', 'alert', 'mount', 'land']) sfx[k] = (...a) => { __sfxEv.push([k, a, performance.now() / 1000]); };
   sfx.update = (l) => { const t = performance.now() / 1000, L = __loads; if (!L.length || t - L[L.length - 1][0] >= .1) L.push([t, l]); };
   return true;
 })()`;
