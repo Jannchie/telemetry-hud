@@ -1,11 +1,11 @@
 # hud-telemetry
 
-给桌面壁纸 HUD 用的本地硬件遥测服务。Rust 单文件 exe（约 600 KB），只监听 `127.0.0.1:27182`，后台每秒采样一次，`GET /stats` 直接返回最新快照。不需要管理员权限。
+给桌面壁纸 HUD 用的本地硬件遥测服务，也可以自己把 HUD 嵌到桌面图标后面当独立壁纸。Rust 单文件 exe（约 1 MB），服务只监听 `127.0.0.1:27182`，后台每秒采样一次，`GET /stats` 直接返回最新快照。不需要管理员权限。
 
 ## 安装（双击即可）
 
-1. 双击 `hud-telemetry.exe`。
-2. 程序会把自己复制到 `%LOCALAPPDATA%\TelemetryHUD\hud-telemetry.exe`，在 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 写入 `TelemetryHUD` = `"<安装路径>" --background` 作为开机自启，然后从安装位置启动后台服务，并弹窗提示安装完成。
+1. 双击 `hud-telemetry.exe`，对话框里选运行方式：“是”= 独立壁纸（`--wallpaper`），“否”= 只跑数据服务（`--background`，给 Wallpaper Engine / Lively 的网页壁纸用），“取消”= 不安装。
+2. 程序会把自己复制到 `%LOCALAPPDATA%\TelemetryHUD\hud-telemetry.exe`，在 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 写入 `TelemetryHUD` = `"<安装路径>" --wallpaper`（或 `--background`）作为开机自启，然后从安装位置启动，并弹窗提示安装完成。
 3. 之后下载的那份 exe 就可以删掉了。
 
 确认服务在运行：
@@ -18,23 +18,24 @@ curl http://127.0.0.1:27182/stats
 
 再双击一次 `hud-telemetry.exe`（下载的那份、安装目录里的那份都可以），在弹出的对话框里选“是”。程序会：
 
-- 结束从安装路径运行的后台实例（按完整路径匹配，不会影响其他位置运行的副本）
+- 结束从安装路径运行的实例（按完整路径匹配，不会影响其他位置运行的副本）。独立壁纸会先收到 `WM_CLOSE` 自行退出（移除托盘图标、撤下桌面上的窗口），3 秒内没退出才强制结束
 - 删除 Run 键里的 `TelemetryHUD`
-- 删除已安装的 exe；如果正在运行的就是安装文件本身，会交给 `cmd` 延迟约 2 秒删除
-- 安装目录只有空了才删除（`hud-wallpaper` 的设置也保存在这个目录下，不会被一起删掉）
+- 删除已安装的 exe 和独立壁纸的 WebView2 数据目录 `webview`（含控制面板设置）；如果正在运行的就是安装文件本身，会交给 `cmd` 延迟约 2 秒删除
+- 安装目录只有空了才删除
 
-在对话框里选“否”就保持现状；如果服务这时没在运行，会顺便把它启动起来。
+在对话框里选“否”就保持现状；如果这时没在运行，会按已安装的方式把它启动起来。
 
-**升级**：在命令行执行 `hud-telemetry.exe --install` 会覆盖安装：先停掉旧实例，复制新版，再重新启动。直接双击的话，已安装时只会询问是否卸载，可以先卸载再双击安装。
+**升级**：在命令行执行 `hud-telemetry.exe --install` 会覆盖安装：先停掉旧实例，复制新版，再按原来的运行方式重新启动。直接双击的话，已安装时只会询问是否卸载，可以先卸载再双击安装。
 
 ## 命令行
 
 | 参数 | 作用 |
 | --- | --- |
 | （无参数） | 双击时的安装 / 卸载对话框 |
-| `--install` | 静默安装或覆盖安装，不弹窗；结果输出到 stdout，返回码 0 表示成功，非 0 表示失败 |
+| `--install` | 静默安装或覆盖安装，不弹窗；结果输出到 stdout，返回码 0 表示成功，非 0 表示失败。可加 `--wallpaper` / `--background` 指定运行方式；都不加时沿用已安装的方式，新装默认 `--background` |
 | `--uninstall` | 静默卸载，规则同上（没安装时也返回 0） |
-| `--background` | 只运行服务，不执行任何安装逻辑；开机自启用的就是这个参数。端口已被占用时直接退出（返回码 1），所以不会产生多个实例 |
+| `--background` | 只运行服务，不执行任何安装逻辑。端口已被占用时直接退出（返回码 1），所以不会产生多个实例 |
+| `--wallpaper` | 独立壁纸（自带服务），不执行任何安装逻辑；单实例，见下文 |
 
 程序是 windows 子系统（运行时没有黑窗口）：
 
@@ -51,6 +52,8 @@ curl http://127.0.0.1:27182/stats
 | `HUD_TEST_ROOT` | 代替 `%LOCALAPPDATA%`，安装到 `<HUD_TEST_ROOT>\TelemetryHUD` |
 | `HUD_TEST_RUNKEY` | 代替 Run 键路径，只接受 `HKCU\...`，例如 `HKCU\Software\TelemetryHUD-Test\Run` |
 | `HUD_PORT` | 服务端口（默认 27182）；安装时启动的后台实例也会继承这个变量 |
+| `HUD_QUERY` | 独立壁纸：追加到页面网址的参数，例如 `theme=glacier&fps=30` |
+| `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` | WebView2 自己的变量；设为 `--remote-debugging-port=9447` 后可以用 CDP 查看壁纸页面的状态 |
 
 ## 其他参数
 
@@ -65,17 +68,20 @@ curl http://127.0.0.1:27182/stats
 
 > 依赖选用 windows-sys 0.61（没有 build script），即使项目放在很深的路径下，链接时也不会因为路径超过 260 字符报 `LNK1104`。
 
-## hud-wallpaper（Wallpaper Engine 应用程序壁纸，已不再维护）
+## 独立壁纸（--wallpaper）
 
-> 应用程序壁纸无法上传创意工坊，现在只维护网页版壁纸 + helper 的组合。以下内容仅作存档。
+不依赖 Wallpaper Engine，把 HUD 直接嵌到桌面图标后面（`src/desktop.rs`）。取代了之前只能由 WE 托管的 `hud-wallpaper.exe`。
 
-同一个 Cargo 项目里还有第二个程序 `hud-wallpaper.exe`（约 630 KB），把采样、HTTP 服务和 WebView2 窗口合在一个进程里：
-
-- `GET /` 返回 HUD 页面：优先读 exe 同目录的 `index.html`，没有就用编译时内嵌的 `../hud/index.html`。`GET /stats` 返回的数据和 hud-telemetry 相同。
-- 默认端口是 27182；被占用时自动换空闲端口，并通过 `?endpoint=` 把新地址告诉页面。
-- 窗口无边框、可缩放，铺满主显示器，支持按显示器 DPI 缩放；WebView 会跟着窗口大小铺满客户区。关闭窗口后进程连同所有 WebView2 子进程一起退出。
-- WebView2 数据目录是 `%LOCALAPPDATA%\TelemetryHUD\webview`，可用环境变量 `HUD_WEBVIEW_DATA` 改到别处（测试用）。release 版关闭了右键菜单、开发者工具和浏览器快捷键，并允许音频自动播放。
-- 程序是单实例的，第二个实例启动后会直接退出。
+- **进程**：单实例（`Local\TelemetryHUD-Desktop`），进程内采样 + HTTP 服务（`/stats`，和 `--background` 一样）。27182 被占用时（例如还有一个 `--background` 实例）自动换空闲端口，并通过 `?endpoint=` 告诉页面。
+- **页面**：`hud/index.html` 和 `hud/fonts/` 编译时内嵌，经 wry 自定义协议提供（页面来源固定为 `http://hud.localhost`，localStorage 里的设置不会随端口变化）。改了页面要重新编译。WebView2 数据目录是 `%LOCALAPPDATA%\TelemetryHUD\webview`（跟随 `HUD_TEST_ROOT`）。
+- **嵌入桌面**：先向 `Progman` 发 `0x052C` 让它生成 WorkerW，再按层级选父窗口：
+  - Windows 11 24H2 起：图标层 `SHELLDLL_DefView` 和画系统壁纸的 `WorkerW` 都是 `Progman` 的子窗口。HUD 窗口挂到 `Progman` 下，z 序紧贴在 `SHELLDLL_DefView` 后面（在 `WorkerW` 之上）。
+  - 更早的版本：挂到 `SHELLDLL_DefView` 所在顶层窗口后面的那个顶层 `WorkerW`。
+- **多显示器**：每个显示器一个窗口。HUD 按 1920×1080 设计、等比适配，一个窗口铺满虚拟桌面会被拉伸并横跨屏幕边框，各屏 DPI 也可能不同；分开后还能只暂停被挡住的那块屏。只有主显示器的页面出声（`?mute=1`）。显示器布局或缩放变化后自动重建。
+- **暂停**：每秒检查一次。某块屏上有最大化的窗口，或有窗口铺满整块屏（全屏应用、无边框游戏）时，暂停这块屏；`SHQueryUserNotificationState` 报告独占全屏 D3D 时全部暂停。最小化、隐身（其他虚拟桌面、后台 UWP）、鼠标穿透的覆盖层和工具窗口不算。暂停时页面停止绘制（画面停在最后一帧）并挂起音频，见页面里的 `hudPause`。
+- **Explorer 重启**：收到 `TaskbarCreated` 后重新添加托盘图标、重建窗口；父窗口失效时也会自动重建。
+- **托盘**：设置（双击图标也行）/ 暂停 / 退出。设置在普通窗口里打开一份带控制面板的 HUD（`?panel=1&mute=1&intro=0`），和壁纸共用 WebView2 数据目录，改动经 `storage` 事件同步到各屏。
+- **鼠标视差**：嵌在桌面里的窗口收不到鼠标事件，每 33 ms 轮询一次 `GetCursorPos`，光标移动时把归一化坐标交给光标所在屏的页面（`hudPointer`）。不用低级鼠标钩子，免得钩子线程卡住时拖慢全局输入。
 
 > 如果 `target\release\hud-telemetry.exe` 正在运行，cargo 无法覆盖它，可以先指定另一个输出目录再构建：`$env:CARGO_TARGET_DIR="tw"; cargo build --release`
 

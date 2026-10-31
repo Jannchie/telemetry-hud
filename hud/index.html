@@ -1763,6 +1763,8 @@ const sfx = (() => {
   setTimeout(unlock, 300);
   const api = {
     boot,
+    // 暂停时挂起音频上下文（底噪随之停止），恢复时继续
+    suspend(on) { if (ac) on ? ac.suspend() : ac.resume(); },
     // 新日志：短促的高频双响，最多每 1.8s 一次，避免长时间运行时过于频繁
     log(now) {
       if (now - lastLog < 1.8) return;
@@ -1830,6 +1832,8 @@ const sfx = (() => {
 // ---------- 控制面板：主题、后处理、音效、帧率上限 ----------
 // 设置保存在 localStorage；网址参数与 Wallpaper Engine 属性优先级更高。右上角按钮或 P 键打开，Esc 关闭。
 const SETTINGS_KEY = 'hud-settings-v1';
+// ?mute=1：本窗口不出声（独立壁纸的副屏、设置预览窗口），不影响保存的音量设置
+const MUTE = params.get('mute') === '1';
 // 默认限 60 FPS：高分屏上满刷新率重绘 + 后处理开销很大，60 帧观感差别不大
 const DEFAULTS = { theme: 'ember', fx: true, curve: .5, glow: 0, scan: .4, parallax: .5, sfx: .35, hum: true, fps: 60 };
 const cfg = { ...DEFAULTS };
@@ -1896,6 +1900,8 @@ const panel = (() => {
     else if (k === 'f') applySettings({ fx: !cfg.fx });
   });
 
+  // ?panel=1：载入时直接打开面板（独立壁纸托盘菜单的「设置」窗口）
+  if (params.get('panel') === '1') toggle(true);
   return {
     sync() {
       for (const inp of el.querySelectorAll('[data-k]')) {
@@ -1927,12 +1933,17 @@ function applySettings(patch = {}, save = true) {
   themeCss();
   FX.curve = cfg.curve; FX.glow = cfg.glow; FX.scan = cfg.scan;
   if (window.hudFx) window.hudFx.set(cfg.fx);
-  SFX.vol = cfg.sfx; SFX.hum = cfg.hum;
+  SFX.vol = MUTE ? 0 : cfg.sfx; SFX.hum = cfg.hum;
   fpsCap = cfg.fps;
   if (save) try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(cfg)); } catch {}
   panel.sync();
 }
 applySettings({}, false);
+// 同一份 localStorage 的其他页面改了设置（独立壁纸的设置窗口 → 各显示器上的壁纸），跟着生效但不再回写
+addEventListener('storage', (e) => {
+  if (e.key !== SETTINGS_KEY) return;
+  try { applySettings({ ...DEFAULTS, ...JSON.parse(e.newValue || '{}') }, false); } catch {}
+});
 
 // ---------- 开屏：组件依次载入 ----------
 // 每个组件从自己的锚点向外生长（圆形裁剪逐渐扩大）并淡入，组件里的文字随之从乱码解码；每个组件开始载入时响一声提示音。按 R 重播。
@@ -2183,6 +2194,11 @@ addEventListener('mousemove', (e) => {
   PAR.last = performance.now() / 1000;
 });
 document.documentElement.addEventListener('mouseleave', () => { PAR.last = -1e9; });
+// 独立壁纸嵌在桌面图标后面收不到鼠标事件，由宿主轮询光标后调用；nx / ny 为窗口内的归一化坐标（-1..1，可超出）
+window.hudPointer = (nx, ny) => {
+  PAR.mx = Math.max(-1, Math.min(1, nx)); PAR.my = Math.max(-1, Math.min(1, ny));
+  PAR.last = performance.now() / 1000;
+};
 function parallaxStep(dt, now) {
   const idle = now - PAR.last > 3, k = 1 - Math.exp(-dt * (idle ? 1.2 : 4));
   PAR.cx += ((idle ? 0 : PAR.mx) - PAR.cx) * k;
@@ -2251,7 +2267,17 @@ function draw(t, now) {
   txt(`${fps.toFixed(0)} FPS`, W - 20, H - 18, `11px ${F.mono}`, C.dim, 'right', .6);
 }
 
+// 独立壁纸在全屏应用前台或从托盘暂停时调用：停止绘制（画面停在最后一帧）并挂起音频
+let paused = false;
+window.hudPause = (on) => {
+  on = !!on;
+  if (on === paused) return;
+  paused = on;
+  sfx.suspend(on);
+  if (!on) { last = performance.now(); requestAnimationFrame(frame); }
+};
 function frame(ts) {
+  if (paused) return;
   requestAnimationFrame(frame);
   if (fpsCap > 0 && ts - lastDraw < 1000 / fpsCap - .5) return;
   lastDraw = ts;

@@ -1,4 +1,4 @@
-// 采样器与 HTTP 服务（hud-telemetry 和 hud-wallpaper 共用）
+// 采样器与 HTTP 服务（--background 和 --wallpaper 共用）
 use crate::gpu::{self, r1, r2};
 use crate::pdh::{Counter, Query, FMT_DOUBLE, FMT_NOCAP};
 use crate::{lhm, mem, sysinfo};
@@ -10,8 +10,6 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 pub type Shared = Arc<Mutex<Arc<Vec<u8>>>>;
-/// 可选：GET / 返回的页面（每次请求调用，便于不重编译就更新页面）
-pub type PageFn = Arc<dyn Fn() -> Vec<u8> + Send + Sync>;
 
 struct Sampler {
     q: Query,
@@ -284,7 +282,7 @@ impl Sampler {
     }
 }
 
-fn handle(mut s: TcpStream, snap: &Shared, page: Option<&PageFn>) {
+fn handle(mut s: TcpStream, snap: &Shared) {
     let _ = s.set_read_timeout(Some(Duration::from_secs(2)));
     let _ = s.set_write_timeout(Some(Duration::from_secs(2)));
     let mut buf = [0u8; 8192];
@@ -305,18 +303,6 @@ fn handle(mut s: TcpStream, snap: &Shared, page: Option<&PageFn>) {
     const CORS: &str = "Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, OPTIONS\r\nAccess-Control-Allow-Headers: *\r\nAccess-Control-Allow-Private-Network: true\r\nCache-Control: no-store\r\nConnection: close\r\n";
     let resp: Vec<u8> = match (method, path) {
         ("OPTIONS", _) => format!("HTTP/1.1 204 No Content\r\n{CORS}Access-Control-Max-Age: 86400\r\nContent-Length: 0\r\n\r\n").into_bytes(),
-        ("GET", "/") if page.is_some() => {
-            let body = page.unwrap()();
-            let mut r = format!("HTTP/1.1 200 OK
-Cache-Control: no-store
-Connection: close
-Content-Type: text/html; charset=utf-8
-Content-Length: {}
-
-", body.len()).into_bytes();
-            r.extend_from_slice(&body);
-            r
-        }
         ("GET", "/stats") | ("GET", "/") => {
             let body = snap.lock().unwrap().clone();
             let mut r = format!("HTTP/1.1 200 OK\r\n{CORS}Content-Type: application/json; charset=utf-8\r\nContent-Length: {}\r\n\r\n", body.len()).into_bytes();
@@ -347,9 +333,9 @@ pub fn spawn_sampler(lhm_port: u16) -> Shared {
 }
 
 /// 阻塞地处理 HTTP 连接
-pub fn serve(listener: TcpListener, snap: Shared, page: Option<PageFn>) {
+pub fn serve(listener: TcpListener, snap: Shared) {
     for s in listener.incoming().flatten() {
-        let (snap, page) = (snap.clone(), page.clone());
-        std::thread::spawn(move || handle(s, &snap, page.as_ref()));
+        let snap = snap.clone();
+        std::thread::spawn(move || handle(s, &snap));
     }
 }
