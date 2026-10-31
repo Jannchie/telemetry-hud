@@ -14,7 +14,6 @@
   #hud-panel {
     position: fixed; top: 16px; right: 16px; z-index: 20; width: 288px; max-height: calc(100vh - 32px); overflow: auto;
     padding: 14px 16px 12px; background: var(--hud-bg); border: 1px solid var(--hud-line); font-size: 12px;
-    clip-path: polygon(14px 0, 100% 0, 100% 100%, 0 100%, 0 14px);
     /* 不用 backdrop-filter：盖在 WebGL 画布上做背景模糊，会让 Wallpaper Engine 的离屏渲染 CEF 崩溃 */
   }
   #hud-panel[hidden] { display: none; }
