@@ -2,7 +2,7 @@
 
 [English](README.md) · [简体中文](README.zh-CN.md) · 日本語
 
-[Wallpaper Engine](https://www.wallpaperengine.io/) 用のサイバーパンク風システムモニター壁紙です。自分の PC のリアルタイムデータを表示します。CPU（P コア / E コアを区別）、GPU、メモリモジュール 1 枚ごと、ドライブ 1 台ごと、ネットワーク、マザーボードのスロット、消費電力に対応しています。ハードウェアの情報は、小さなローカルヘルパープログラムが読み取ります。
+サイバーパンク風のシステムモニター壁紙です。単体でデスクトップアイコンの後ろに表示することも、[Wallpaper Engine](https://www.wallpaperengine.io/) で使うこともできます。自分の PC のリアルタイムデータを表示します。CPU（P コア / E コアを区別）、GPU、メモリモジュール 1 枚ごと、ドライブ 1 台ごと、ネットワーク、マザーボードのスロット、消費電力に対応しています。ハードウェアの情報は、小さなローカルヘルパープログラムが読み取ります。
 
 ![Telemetry HUD](docs/screenshot.jpg)
 
@@ -19,15 +19,34 @@
 
 ## インストール
 
-Windows 10/11（x64）と Wallpaper Engine が必要です。
+Windows 10/11（x64）が必要です。[`hud-telemetry.exe`](https://github.com/Jannchie/telemetry-hud/releases/latest/download/hud-telemetry.exe) をダウンロードしてダブルクリックすると、使い方を選ぶダイアログが出ます。
 
-1. **ヘルパー**：[`hud-telemetry.exe`](https://github.com/Jannchie/telemetry-hud/releases/latest/download/hud-telemetry.exe) をダウンロードして、ダブルクリックします。
-   `%LOCALAPPDATA%\TelemetryHUD` に自分自身をコピーし、サインイン時の自動起動を登録して（管理者権限は不要）、そのままバックグラウンドで動き始めます。ダウンロードしたファイルは削除して構いません。
-   exe にはコード署名がないため、初回起動時に Windows SmartScreen の警告が出ることがあります。**詳細情報 → 実行** をクリックしてください。
-2. **壁紙**：同じリリースから `telemetry-hud-wallpaper-*.zip` をダウンロードし、
-   `…\steamapps\common\wallpaper_engine\projects\myprojects\` に展開します。インストール済みの壁紙に **Telemetry HUD** が表示されます。
+- **はい：単体の壁紙**。Wallpaper Engine は不要です。
+- **いいえ：ヘルパーのみ**。Wallpaper Engine の壁紙と組み合わせて使います。
 
-ヘルパーがなくても壁紙は動きますが、すべてのパネルが NO SIGNAL になります。
+どちらの場合も `%LOCALAPPDATA%\TelemetryHUD` に自分自身をコピーし、サインイン時の自動起動を登録して（管理者権限は不要）、そのまま動き始めます。ダウンロードしたファイルは削除して構いません。
+
+exe にはコード署名がないため、初回起動時に Windows SmartScreen の警告が出ることがあります。**詳細情報 → 実行** をクリックしてください。
+
+### 単体の壁紙
+
+HUD はデスクトップアイコンの後ろに、モニターごとに 1 つずつ表示されます。Microsoft Edge WebView2 Runtime を使います（Windows 11 と最新の Windows 10 には標準で入っています）。
+
+- モニター上のウィンドウが最大化または全画面（ゲームなど）になっている間は、そのモニターの描画を止めます。見えていないときはリソースを使いません。
+- タスクトレイのアイコンから設定・一時停止・終了ができます。アイコンをダブルクリックしても設定が開きます。
+- 音が出るのはプライマリモニターの HUD だけです。
+- アイコンの後ろにあっても、視差効果はマウスに追従します。
+
+Wallpaper Engine でもこの壁紙を表示している場合は、二重に描画されるので先に止めてください。
+
+### Wallpaper Engine
+
+インストールのダイアログで **いいえ** を選び、ヘルパーだけをインストールします。次に同じリリースから `telemetry-hud-wallpaper-*.zip` をダウンロードし、
+`…\steamapps\common\wallpaper_engine\projects\myprojects\` に展開します。インストール済みの壁紙に **Telemetry HUD** が表示されます。
+
+ヘルパーがなくても Wallpaper Engine の壁紙は動きますが、すべてのパネルが NO SIGNAL になります。
+
+あとから使い方を切り替えるには、`hud-telemetry.exe --install --wallpaper`（単体の壁紙）または `hud-telemetry.exe --install --background`（ヘルパーのみ）を実行します。
 
 ### オプション：CPU 温度
 
@@ -43,10 +62,11 @@ Windows は CPU 温度を通常のプログラムに公開していません。�
 
 - **Wallpaper Engine のプロパティ**：テーマ、ポストエフェクト、湾曲、グロー、走査線、音量、環境ノイズ。
 - **壁紙内のコントロールパネル**：右上のボタンで開きます。変更はすぐに反映されて保存されますが、壁紙を読み込むたびに Wallpaper Engine のプロパティの値で上書きされます。
+- **単体の壁紙**：タスクトレイのアイコンを右クリックして **設定** を選ぶと、コントロールパネルが別ウィンドウで開きます。変更はすぐにデスクトップへ反映されます。
 
 ## アンインストール
 
-`hud-telemetry.exe` をもう一度ダブルクリックし、**はい** を選びます。ヘルパーを停止し、自動起動の登録とインストール済みのファイルを削除します。
+`hud-telemetry.exe` をもう一度ダブルクリックし、**はい** を選びます。ヘルパーまたは単体の壁紙を停止し、自動起動の登録とインストール済みのファイルを削除します。単体の壁紙の設定も一緒に削除されます。
 
 ## プライバシー
 

@@ -2,7 +2,7 @@
 
 English · [简体中文](README.zh-CN.md) · [日本語](README.ja.md)
 
-A cyberpunk system-monitor wallpaper for [Wallpaper Engine](https://www.wallpaperengine.io/). It shows live data from your own PC: CPU (performance and efficiency cores), GPU, every memory module, every disk, network, motherboard slots and power draw. A tiny local helper program reads the hardware.
+A cyberpunk system-monitor wallpaper. It runs on its own behind your desktop icons, or inside [Wallpaper Engine](https://www.wallpaperengine.io/). It shows live data from your own PC: CPU (performance and efficiency cores), GPU, every memory module, every disk, network, motherboard slots and power draw. A tiny local helper program reads the hardware.
 
 ![Telemetry HUD](docs/screenshot.jpg)
 
@@ -19,15 +19,34 @@ A cyberpunk system-monitor wallpaper for [Wallpaper Engine](https://www.wallpape
 
 ## Install
 
-Requires Windows 10/11 (x64) and Wallpaper Engine.
+Requires Windows 10/11 (x64). Download [`hud-telemetry.exe`](https://github.com/Jannchie/telemetry-hud/releases/latest/download/hud-telemetry.exe) and double-click it. It asks how you want to use it:
 
-1. **Helper**: download [`hud-telemetry.exe`](https://github.com/Jannchie/telemetry-hud/releases/latest/download/hud-telemetry.exe) and double-click it.
-   It copies itself to `%LOCALAPPDATA%\TelemetryHUD`, starts automatically when you sign in (no administrator rights needed), and runs in the background right away. You can delete the downloaded file afterwards.
-   Windows SmartScreen may warn you on first run because the exe isn't code-signed. Click **More info → Run anyway**.
-2. **Wallpaper**: download `telemetry-hud-wallpaper-*.zip` from the same release and unzip it into
-   `…\steamapps\common\wallpaper_engine\projects\myprojects\`. **Telemetry HUD** then appears in your installed wallpapers.
+- **Yes: standalone wallpaper**, no Wallpaper Engine needed.
+- **No: helper only**, for the Wallpaper Engine wallpaper.
 
-Without the helper the wallpaper still runs, but every panel shows NO SIGNAL.
+Either way it copies itself to `%LOCALAPPDATA%\TelemetryHUD`, starts automatically when you sign in (no administrator rights needed), and starts running right away. You can delete the downloaded file afterwards.
+
+Windows SmartScreen may warn you on first run because the exe isn't code-signed. Click **More info → Run anyway**.
+
+### Standalone wallpaper
+
+The HUD appears behind your desktop icons, with one copy on each monitor. It uses the Microsoft Edge WebView2 Runtime, which comes with Windows 11 and up-to-date Windows 10.
+
+- Rendering pauses on a monitor while a window there is maximized or full screen, for example a game, so it costs nothing while you can't see it.
+- Use the tray icon to open the settings, pause the wallpaper or exit. Double-clicking the tray icon also opens the settings.
+- Only the primary monitor plays sound.
+- The HUD follows your mouse for the parallax effect, even though it sits behind the icons.
+
+If you already run the wallpaper in Wallpaper Engine, turn that off first, or you'll have two copies drawing at once.
+
+### Wallpaper Engine
+
+Choose **No** in the install dialog to install just the helper. Then download `telemetry-hud-wallpaper-*.zip` from the same release and unzip it into
+`…\steamapps\common\wallpaper_engine\projects\myprojects\`. **Telemetry HUD** then appears in your installed wallpapers.
+
+Without the helper the Wallpaper Engine wallpaper still runs, but every panel shows NO SIGNAL.
+
+To switch between the two modes later, run `hud-telemetry.exe --install --wallpaper` (standalone) or `hud-telemetry.exe --install --background` (helper only).
 
 ### Optional: CPU temperature
 
@@ -43,10 +62,11 @@ The helper picks it up automatically within about 15 seconds. LibreHardwareMonit
 
 - **Wallpaper Engine properties**: theme, post-processing, curvature, glow, scanlines, volume, ambient hum.
 - **In-wallpaper panel**: click the button in the top-right corner. Settings are saved and take effect immediately, but the Wallpaper Engine properties override them each time the wallpaper loads.
+- **Standalone**: right-click the tray icon and choose **Settings**. The panel opens in its own window, and every change shows on the desktop right away.
 
 ## Uninstall
 
-Double-click `hud-telemetry.exe` again and choose **Yes**. This stops the helper, removes the autostart entry and deletes the installed copy.
+Double-click `hud-telemetry.exe` again and choose **Yes**. This stops the helper or the standalone wallpaper, removes the autostart entry and deletes the installed copy along with the standalone wallpaper's settings.
 
 ## Privacy
 

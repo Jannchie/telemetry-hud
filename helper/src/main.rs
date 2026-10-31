@@ -1,6 +1,7 @@
 // release 构建不弹控制台窗口（适合开机自启）；debug 构建保留控制台
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod desktop;
 mod install;
 
 use hud_telemetry::{server, sysinfo};
@@ -28,7 +29,14 @@ fn main() {
     }
     if has("--install") || has("--uninstall") {
         attach_console();
-        std::process::exit(install::cli(has("--install")));
+        let mode = if has("--wallpaper") {
+            Some(install::Mode::Wallpaper)
+        } else if has("--background") {
+            Some(install::Mode::Helper)
+        } else {
+            None
+        };
+        std::process::exit(install::cli(has("--install"), mode));
     }
     if has("--probe-disks") || has("--probe-health") || has("--probe-board") {
         attach_console();
@@ -76,6 +84,11 @@ fn main() {
         println!("smbios={t_smbios:?} pci_scan={t_scan:?}");
         return;
     }
+    // 独立壁纸：嵌到桌面图标后面，自带数据服务（端口取 HUD_PORT，默认 27182）
+    if has("--wallpaper") {
+        desktop::run(lhm_port);
+        return;
+    }
     // 以下是服务模式（--background，或带 --port / --lhm-port 等参数）
     // 端口被占用（例如已有实例在跑）就直接退出
     let listener = match TcpListener::bind(("127.0.0.1", port)) {
@@ -87,5 +100,5 @@ fn main() {
     };
     let snap = server::spawn_sampler(lhm_port);
     eprintln!("hud-telemetry listening on http://127.0.0.1:{port}/stats");
-    server::serve(listener, snap, None);
+    server::serve(listener, snap);
 }

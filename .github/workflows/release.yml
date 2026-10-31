@@ -60,7 +60,7 @@ jobs:
           {
             echo '**Downloads**'
             echo
-            echo '- `hud-telemetry.exe`: the hardware helper. Double-click it to install it with per-user autostart. Double-click it again to uninstall.'
+            echo '- `hud-telemetry.exe`: the standalone wallpaper and hardware helper. Double-click it to install it with per-user autostart: choose Yes to show the HUD behind your desktop icons without Wallpaper Engine, or No for just the helper. Double-click it again to uninstall.'
             echo "- \`telemetry-hud-wallpaper-$VERSION.zip\`: the Wallpaper Engine web wallpaper. Unzip it into \`wallpaper_engine\\projects\\myprojects\\\`."
             echo '- `SHA256SUMS.txt`: checksums.'
             echo

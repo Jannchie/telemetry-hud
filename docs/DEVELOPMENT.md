@@ -6,11 +6,9 @@
 | --- | --- |
 | `hud/index.html` | 整个 HUD：单文件 Canvas2D 绘制 + WebGL2 后处理 + WebAudio 合成音效 |
 | `hud/fonts/` | 本地打包的 OFL 字体，由 `tools/fetch-fonts.mjs` 生成 |
-| `helper/` | Rust 写的硬件遥测服务 `hud-telemetry.exe`，见 [helper/README.md](../helper/README.md) |
+| `helper/` | Rust 写的 `hud-telemetry.exe`：硬件遥测服务，以及不依赖 Wallpaper Engine 的独立壁纸（`--wallpaper`，把 `hud/` 编译进 exe），见 [helper/README.md](../helper/README.md) |
 | `wallpaper-engine/telemetry-hud/` | Wallpaper Engine 网页壁纸包：`project.json`（属性面板）、`preview.jpg`、包内 README；`index.html` 和 `fonts/` 由打包脚本复制 |
 | `tools/` | 开发脚本：字体下载、壁纸打包、演示视频导出 |
-
-`helper/src/bin/hud-wallpaper.rs`（应用程序版壁纸）已不再维护。
 
 ## 本地预览
 
@@ -33,6 +31,8 @@ python -m http.server 5174 -d hud
 | `hum=0` | 关闭环境底噪 |
 | `fps=` | 帧率上限，0 为跟随显示器 |
 | `bottom=` | 屏幕底部预留高度（设计坐标，默认 80） |
+| `panel=1` | 载入时打开控制面板（独立壁纸的设置窗口用） |
+| `mute=1` | 本页面不出声，不影响保存的音量（独立壁纸的副屏和设置窗口用） |
 
 数据原则：正式模式下只显示 helper 实测到的值，读不到的一律显示 NO SIGNAL，不推测、不填充模拟数据。
 
