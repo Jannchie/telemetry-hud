@@ -1,6 +1,7 @@
 // 逐帧导出 HUD 演示视频：无界面 Edge 打开巡演页面，接管页面时钟，每帧精确推进 1/fps 秒后取画面，交给 ffmpeg 编码。
 // 音效：导出期间记录每次音效触发的时刻与底噪负载曲线，画面导出后用页面自己的合成器离线渲染整段音轨，再与画面合成。
 // 用法：node tools/export-video.mjs [秒数=64] [输出=video/telemetry-hud-demo.mp4] [页面地址=http://localhost:5174/?demo=tour]
+// 默认按 2 倍像素比渲染、输出 3840×2160：HUD 里大量 1px 细线和 8–9px 小字，1080p 下会糊；环境变量 HUD_SCALE=1 输出 1080p
 // 依赖：Microsoft Edge、ffmpeg（在 PATH 中）、页面所在的本地静态服务器。只用 Node 自带的 fetch / WebSocket，无需安装依赖。
 import { spawn } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -9,8 +10,9 @@ import { dirname, join, resolve } from 'node:path';
 
 const SECONDS = +(process.argv[2] || 64);
 const OUT = resolve(process.argv[3] || 'video/telemetry-hud-demo.mp4');
+// 保留页面默认的底部预留：设备树和内存条卡片会画进这块区域，设成 bottom=0 会被裁掉
 const URL_ = process.argv[4] || 'http://localhost:5174/?demo=tour';
-const FPS = 60, W = 1920, H = 1080, PORT = 9333;
+const FPS = 60, W = 1920, H = 1080, SCALE = +(process.env.HUD_SCALE || 2), PORT = 9333;
 const EDGE = 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe';
 
 // 在页面脚本运行前注入：用虚拟时钟替换 performance.now 与 requestAnimationFrame，__step(dt) 推进一帧
@@ -36,7 +38,7 @@ const HOOK_SFX = `(() => {
 const GRAB = `(() => {
   __step(${1000 / FPS});
   const fx = window.hudFx && window.hudFx.on ? document.querySelectorAll('canvas')[1] : document.getElementById('c');
-  return fx.toDataURL('image/jpeg', 0.93).slice(23);
+  return fx.toDataURL('image/jpeg', 0.97).slice(23);
 })()`;
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -72,7 +74,7 @@ try {
     if (m.id && pending.has(m.id)) { const p = pending.get(m.id); pending.delete(m.id); m.error ? p.rej(new Error(m.error.message)) : p.res(m.result); }
   };
   await send('Page.enable');
-  await send('Emulation.setDeviceMetricsOverride', { width: W, height: H, deviceScaleFactor: 1, mobile: false });
+  await send('Emulation.setDeviceMetricsOverride', { width: W, height: H, deviceScaleFactor: SCALE, mobile: false });
   await send('Page.addScriptToEvaluateOnNewDocument', { source: CLOCK });
   await send('Page.navigate', { url: URL_ });
   // 等页面和网络字体就绪，避免开头几帧用后备字体
