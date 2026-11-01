@@ -27,11 +27,13 @@ const CLOCK = `(() => {
     const cbs = q; q = []; for (const cb of cbs) cb(t);
   };
 })();`;
-// 包装音效方法：导出时不播放，只记录 [方法名, 参数, 虚拟时间]；开机扫频音在页面里由定时器触发，这里按 0.3 秒补一条
+// 包装音效方法：导出时不播放，只记录 [方法名, 参数, 虚拟时间]；开机扫频音在页面里由定时器触发，这里按 0.3 秒补一条。
+// 除了下面几个非事件方法，sfx 上的方法都当作音效事件记录，页面新增音效时这里不用跟着改
 const HOOK_SFX = `(() => {
   window.__sfxEv = [['boot', [], 0.3]]; window.__loads = []; window.__sfxOrig = {};
-  for (const k of ['status', 'stage', 'alert', 'mount', 'land', 'update']) __sfxOrig[k] = sfx[k];
-  for (const k of ['status', 'stage', 'alert', 'mount', 'land']) sfx[k] = (...a) => { __sfxEv.push([k, a, performance.now() / 1000]); };
+  const notEvents = ['boot', 'suspend', 'update', 'renderOffline'];
+  for (const [k, f] of Object.entries(sfx)) if (typeof f === 'function') __sfxOrig[k] = f;
+  for (const k of Object.keys(__sfxOrig)) if (!notEvents.includes(k)) sfx[k] = (...a) => { __sfxEv.push([k, a, performance.now() / 1000]); };
   sfx.update = (l) => { const t = performance.now() / 1000, L = __loads; if (!L.length || t - L[L.length - 1][0] >= .1) L.push([t, l]); };
   return true;
 })()`;
