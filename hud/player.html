@@ -1,0 +1,1559 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Telemetry HUD Player</title>
+<!-- 与 index.html 共用本地打包的 OFL 字体；标题、歌词里的中日韩文字回退到系统字体 -->
+<link href="fonts/fonts.css" rel="stylesheet">
+<style>
+  html, body { margin: 0; height: 100%; background: #0e0f11; overflow: hidden; }
+  canvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
+  #hud-panel, #hud-gear { font-family: "Chakra Petch", "Microsoft YaHei UI", "PingFang SC", sans-serif; color: var(--hud-fg); }
+  #hud-panel {
+    position: fixed; top: 16px; right: 16px; z-index: 20; width: 288px; max-height: calc(100vh - 32px); overflow: auto;
+    padding: 14px 16px 12px; background: var(--hud-bg); border: 1px solid var(--hud-line); font-size: 12px;
+  }
+  #hud-panel[hidden] { display: none; }
+  #hud-panel header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; letter-spacing: .3em; font-weight: 600; font-size: 11px; }
+  #hud-panel section { padding: 10px 0 4px; border-top: 1px solid var(--hud-line); }
+  #hud-panel h3 { margin: 0 0 8px; font-size: 10px; font-weight: 600; letter-spacing: .25em; color: var(--hud-dim); }
+  #hud-panel button { font: inherit; color: inherit; background: none; border: 1px solid var(--hud-line); cursor: pointer; }
+  #hud-panel button:focus-visible, #hud-panel input:focus-visible, #hud-gear:focus-visible { outline: 1px solid var(--hud-hot); outline-offset: 2px; }
+  #hud-panel .x { border: none; font-size: 16px; line-height: 1; padding: 2px 6px; color: var(--hud-dim); }
+  #hud-panel .x:hover { color: var(--hud-fg); }
+  #hud-panel .themes { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  #hud-panel .themes button { display: flex; align-items: center; gap: 3px; padding: 6px 8px; text-align: left; text-transform: uppercase; letter-spacing: .1em; font-size: 10px; }
+  #hud-panel .themes button span { margin-left: 6px; }
+  #hud-panel .themes i { width: 4px; height: 12px; transform: skewX(-20deg); }
+  #hud-panel .themes button[aria-pressed="true"] { border-color: var(--hud-hot); }
+  #hud-panel .themes button:hover { border-color: var(--hud-dim); }
+  #hud-panel label { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 2px 8px; margin: 0 0 10px; }
+  #hud-panel label.sl input { grid-column: 1 / -1; }
+  #hud-panel output { font-variant-numeric: tabular-nums; color: var(--hud-dim); font-size: 11px; }
+  #hud-panel input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 16px; margin: 0; background: transparent; cursor: pointer; }
+  #hud-panel input[type=range]::-webkit-slider-runnable-track { height: 2px; background: linear-gradient(to right, var(--hud-hot) var(--p, 0%), var(--hud-line) var(--p, 0%)); }
+  #hud-panel input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 7px; height: 14px; margin-top: -6px; background: var(--hud-hot); transform: skewX(-20deg); }
+  #hud-panel input[type=range]:disabled { opacity: .35; cursor: default; }
+  #hud-panel input[type=checkbox] {
+    -webkit-appearance: none; appearance: none; width: 30px; height: 12px; margin: 0; border: 1px solid var(--hud-line); position: relative; cursor: pointer;
+  }
+  #hud-panel input[type=checkbox]::after { content: ""; position: absolute; top: 1px; left: 1px; width: 12px; height: 8px; background: var(--hud-dim); transition: transform .15s; }
+  #hud-panel input[type=checkbox]:checked { border-color: var(--hud-hot); }
+  #hud-panel input[type=checkbox]:checked::after { transform: translateX(15px); background: var(--hud-hot); }
+  #hud-panel input[type=checkbox]:disabled { opacity: .35; }
+  #hud-panel .fps { display: grid; gap: 4px; margin: 0 0 10px; }
+  #hud-panel .seg { display: flex; gap: 4px; }
+  #hud-panel .seg button { flex: 1; padding: 3px 0; font-size: 11px; font-variant-numeric: tabular-nums; }
+  #hud-panel .seg button[aria-pressed="true"] { border-color: var(--hud-hot); color: var(--hud-hot); }
+  #hud-panel .seg button:hover { border-color: var(--hud-dim); }
+  #hud-panel footer { display: flex; justify-content: space-between; align-items: center; padding-top: 10px; border-top: 1px solid var(--hud-line); color: var(--hud-dim); font-size: 10px; }
+  #hud-panel footer button { padding: 4px 10px; font-size: 11px; }
+  #hud-panel footer button:hover { border-color: var(--hud-hot); }
+  #hud-gear {
+    position: fixed; top: 10px; right: 10px; z-index: 19; width: 28px; height: 28px; display: grid; place-items: center;
+    background: none; border: 1px solid transparent; opacity: .12; cursor: pointer; transition: opacity .2s, border-color .2s;
+  }
+  #hud-gear:hover, #hud-gear:focus-visible, #hud-gear[aria-expanded="true"] { opacity: 1; border-color: var(--hud-line); }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<input id="pick" type="file" multiple hidden accept="audio/*,.mp3,.flac,.wav,.ogg,.oga,.opus,.m4a,.mp4,.aac,.lrc">
+<script>
+/*
+ * 音乐播放器 HUD：与 index.html 同一套视觉语言（Canvas2D 按 1920×1080 设计坐标绘制，WebGL2 做扫描线 / 曲面 / 辉光）。
+ *
+ * 构图：侧视的飞翼。前缘处的圆环是进度与当前曲目，左右声道示波器沿上下蒙皮流向后缘，
+ *   翼梁上挂歌词，播放列表与文件规格从下蒙皮垂下（详见下方「构图」处的说明）
+ *
+ * 音频来源：拖放或选择本地音频文件，同名 .lrc 自动匹配。格式、大小取浏览器给出的文件信息；标题 / 歌手 / 专辑 / 码率
+ * 从文件本身解析（ID3v1 / ID3v2、FLAC 与 Ogg 的 Vorbis comment、MP4 ilst、RIFF INFO），读不到的一律显示 NO SIGNAL，
+ * 标题退回文件名并注明来源，不推测、不编造。?demo=1：用 Web Audio 离线合成三首示例曲（写成带 INFO 标签的 WAV，走同一套解析）
+ * 和内置示例歌词，界面上标注为演示。
+ */
+// 配色与 index.html 相同：hot = 主色 / 右声道，cool = 次要数据 / 左声道，mark = 标记点，alt / heat = 告警
+const THEMES = {
+  ember: {
+    bg: '#0c0c0e', bg0: '#16151a', bg1: '#08080a', fg: '#ece6da', dim: '#7c766b', line: '#4a453f', faint: '#2a2723',
+    hot: '#ff6b2c', cool: '#8fd3d6', mark: '#d7f04a', alt: '#c77dff', heat: '#ff2d6f',
+  },
+  glacier: {
+    bg: '#0a0f17', bg0: '#121c2a', bg1: '#070b12', fg: '#e3edf7', dim: '#62748c', line: '#33465c', faint: '#1b2636',
+    hot: '#ff4f70', cool: '#5ee3ff', mark: '#b9a3ff', alt: '#ffb84d', heat: '#ff3d3d',
+  },
+  phosphor: {
+    bg: '#070b08', bg0: '#0f1712', bg1: '#050806', fg: '#d6f5da', dim: '#5d7d63', line: '#2e4634', faint: '#18251b',
+    hot: '#ff9a3c', cool: '#47f5a0', mark: '#f3ef9a', alt: '#ff5577', heat: '#ff2e63',
+  },
+  classic: {
+    bg: '#0e0f11', bg0: '#141619', bg1: '#0a0b0d', fg: '#dfe3e6', dim: '#6b7076', line: '#43484e', faint: '#2a2d31',
+    hot: '#e5243b', cool: '#2bb5a4', mark: '#f4c21b', alt: '#b48cff', heat: '#ff3fa4',
+  },
+  amber: {
+    bg: '#0d0a06', bg0: '#1a140b', bg1: '#080604', fg: '#ffe2b0', dim: '#8a7451', line: '#4d3f2a', faint: '#2a2116',
+    hot: '#ff8a1f', cool: '#ffc96b', mark: '#fff4d6', alt: '#ff5c8a', heat: '#ff3b30',
+  },
+  synthwave: {
+    bg: '#0d0817', bg0: '#1b1030', bg1: '#07040d', fg: '#f3e8ff', dim: '#7f6a9c', line: '#45365e', faint: '#241a36',
+    hot: '#ff3ea5', cool: '#3ee8ff', mark: '#ffd23f', alt: '#9d7bff', heat: '#ff4545',
+  },
+  sakura: {
+    bg: '#100c0e', bg0: '#1d1419', bg1: '#0a0709', fg: '#f7e9ee', dim: '#8a7279', line: '#4d3d43', faint: '#2a2024',
+    hot: '#ff7aa2', cool: '#8fe0c8', mark: '#ffe08a', alt: '#b892ff', heat: '#ff4d4d',
+  },
+  cobalt: {
+    bg: '#060a14', bg0: '#0d1730', bg1: '#04070e', fg: '#e6eeff', dim: '#5f6f91', line: '#2c3b5c', faint: '#162038',
+    hot: '#ffb627', cool: '#4da3ff', mark: '#ff7a5c', alt: '#c27dff', heat: '#ff3d6e',
+  },
+  mono: {
+    bg: '#0b0b0b', bg0: '#161616', bg1: '#070707', fg: '#f2f2f2', dim: '#767676', line: '#444444', faint: '#262626',
+    hot: '#f5f5f5', cool: '#9a9a9a', mark: '#ffd60a', alt: '#c084fc', heat: '#ff3b3b',
+  },
+};
+const alpha = (hex, a) => {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`;
+};
+let C, themeName;
+function setTheme(name) {
+  themeName = THEMES[name] ? name : 'ember';
+  C = { ...THEMES[themeName] };
+  document.body.style.background = C.bg;
+  if (window.hudReady) resize();
+}
+// 拉丁字符用打包字体，中日韩文字回退到系统字体
+const CJK = '"Microsoft YaHei UI", "PingFang SC", "Hiragino Sans", "Noto Sans CJK SC", sans-serif';
+const F = {
+  disp: `"Michroma", "Chakra Petch", ${CJK}`,
+  ui: `"Chakra Petch", "Segoe UI", ${CJK}`,
+  mono: '"JetBrains Mono", "Cascadia Mono", Consolas, monospace',
+};
+const TAU = Math.PI * 2;
+const params = new URLSearchParams(location.search);
+const DEMO = params.get('demo') === '1';
+let fpsCap = +(params.get('fps') || 0);
+const BOTTOM = +(params.get('bottom') ?? 80);
+setTheme(params.get('theme'));
+
+// ---------- 元数据：只读文件里真实存在的字段，读不到就保持 null ----------
+const META = (() => {
+  const bytes = async (blob, a, n) => new Uint8Array(await blob.slice(a, a + n).arrayBuffer());
+  const ascii = (b, a, n) => { let s = ''; for (let i = a; i < a + n && i < b.length; i++) s += String.fromCharCode(b[i]); return s; };
+  const be16 = (b, i) => (b[i] << 8) | b[i + 1];
+  const be24 = (b, i) => (b[i] << 16) | (b[i + 1] << 8) | b[i + 2];
+  const be32 = (b, i) => ((b[i] << 24) >>> 0) + ((b[i + 1] << 16) | (b[i + 2] << 8) | b[i + 3]);
+  const le16 = (b, i) => b[i] | (b[i + 1] << 8);
+  const le32 = (b, i) => (b[i] | (b[i + 1] << 8) | (b[i + 2] << 16) | (b[i + 3] << 24)) >>> 0;
+  const syncsafe = (b, i) => ((b[i] & 127) << 21) | ((b[i + 1] & 127) << 14) | ((b[i + 2] & 127) << 7) | (b[i + 3] & 127);
+  const utf8 = new TextDecoder('utf-8');
+  // 未声明编码的老标签（ID3 编码 0、ID3v1、RIFF INFO、LRC）：先按 UTF-8 严格解码，失败时中文环境按 GB18030，否则按 Windows-1252
+  const legacy = (b) => {
+    try { return new TextDecoder('utf-8', { fatal: true }).decode(b); }
+    catch { return new TextDecoder(/^zh/i.test(navigator.language) ? 'gb18030' : 'windows-1252').decode(b); }
+  };
+  const decodeAny = (b) => b[0] === 0xff && b[1] === 0xfe ? new TextDecoder('utf-16le').decode(b)
+    : b[0] === 0xfe && b[1] === 0xff ? new TextDecoder('utf-16be').decode(b) : legacy(b);
+  // 多值以 \0 分隔（ID3v2.4），合并成 " / "；空串视为没有
+  const clean = (s) => { s = String(s).replace(/﻿/g, '').split('\0').map(x => x.trim()).filter(Boolean).join(' / '); return s || null; };
+  // 编码 1 为带 BOM 的 UTF-16（缺 BOM 时按小端）
+  const id3Text = (enc, b) => enc === 1 ? new TextDecoder(b[0] === 0xfe && b[1] === 0xff ? 'utf-16be' : 'utf-16le').decode(b)
+    : enc === 2 ? new TextDecoder('utf-16be').decode(b) : enc === 3 ? utf8.decode(b) : legacy(b);
+  // 去掉 ID3 的反同步字节（FF 00 → FF）
+  const unsync = (b) => {
+    const o = new Uint8Array(b.length); let j = 0;
+    for (let i = 0; i < b.length; i++) { o[j++] = b[i]; if (b[i] === 0xff && b[i + 1] === 0) i++; }
+    return o.subarray(0, j);
+  };
+  // 描述字段的结束位置：UTF-16 为对齐的双零，其他为单零
+  const afterTerm = (b, i, enc) => {
+    if (enc === 1 || enc === 2) { for (; i + 1 < b.length; i += 2) if (!b[i] && !b[i + 1]) return i + 2; }
+    else for (; i < b.length; i++) if (!b[i]) return i + 1;
+    return b.length;
+  };
+  const ID3_TEXT = { TIT2: 'title', TT2: 'title', TPE1: 'artist', TP1: 'artist', TALB: 'album', TAL: 'album', TPE2: 'albumArtist', TP2: 'albumArtist' };
+
+  async function id3v2(blob, m) {
+    const h = await bytes(blob, 0, 10);
+    if (h.length < 10 || ascii(h, 0, 3) !== 'ID3') return 0;
+    const ver = h[3], flags = h[5], size = syncsafe(h, 6);
+    let b = await bytes(blob, 10, size);
+    if (ver < 4 && flags & 0x80) b = unsync(b);
+    let p = flags & 0x40 ? (ver === 4 ? syncsafe(b, 0) : be32(b, 0) + 4) : 0;
+    const hl = ver === 2 ? 6 : 10;
+    while (p + hl <= b.length) {
+      const id = ascii(b, p, ver === 2 ? 3 : 4);
+      const n = ver === 2 ? be24(b, p + 3) : ver === 4 ? syncsafe(b, p + 4) : be32(b, p + 4);
+      if (!/^[A-Z0-9]+$/.test(id) || n <= 0 || p + hl + n > b.length) break;
+      let f = b.subarray(p + hl, p + hl + n);
+      const ff = ver === 2 ? 0 : b[p + 9];
+      p += hl + n;
+      // 压缩 / 加密的帧跳过
+      if (ver === 3 && ff & 0xc0 || ver === 4 && ff & 0x0c) continue;
+      if (ver === 4) { if (ff & 0x02) f = unsync(f); if (ff & 0x01) f = f.subarray(4); }
+      if (ID3_TEXT[id]) m[ID3_TEXT[id]] ||= clean(id3Text(f[0], f.subarray(1)));
+      else if (id === 'USLT' || id === 'ULT') m.lyrics ||= id3Text(f[0], f.subarray(afterTerm(f, 4, f[0]))).replace(/[\0﻿]/g, '').trim() || null;
+    }
+    return 10 + size + (flags & 0x10 ? 10 : 0);
+  }
+  async function id3v1(blob, m) {
+    if (blob.size < 128) return false;
+    const b = await bytes(blob, blob.size - 128, 128);
+    if (ascii(b, 0, 3) !== 'TAG') return false;
+    const f = (a, n) => { const z = b.subarray(a, a + n), e = z.indexOf(0); return clean(legacy(e < 0 ? z : z.subarray(0, e))); };
+    m.title ||= f(3, 30); m.artist ||= f(33, 30); m.album ||= f(63, 30);
+    return true;
+  }
+
+  // MPEG 音频帧头：码率表 kbps，[MPEG-1 L1, L2, L3]、[MPEG-2/2.5 L1, L2/L3]
+  const BR1 = [
+    [0, 32, 64, 96, 128, 160, 192, 224, 256, 288, 320, 352, 384, 416, 448],
+    [0, 32, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 384],
+    [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320],
+  ];
+  const BR2 = [[0, 32, 48, 56, 64, 80, 96, 112, 128, 144, 160, 176, 192, 224, 256], [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160]];
+  const SR = { 3: [44100, 48000, 32000], 2: [22050, 24000, 16000], 0: [11025, 12000, 8000] };
+  function mpeg(b, i) {
+    if (b[i] !== 0xff || (b[i + 1] & 0xe0) !== 0xe0) return null;
+    const ver = (b[i + 1] >> 3) & 3, layer = (b[i + 1] >> 1) & 3, bi = b[i + 2] >> 4, si = (b[i + 2] >> 2) & 3, pad = (b[i + 2] >> 1) & 1, mode = b[i + 3] >> 6;
+    if (ver === 1 || layer === 0 || bi === 0 || bi === 15 || si === 3) return null;
+    const L = 4 - layer, v1 = ver === 3;
+    const kbps = v1 ? BR1[L - 1][bi] : BR2[L === 1 ? 0 : 1][bi], sr = SR[ver][si];
+    const spf = L === 1 ? 384 : L === 2 || v1 ? 1152 : 576;
+    const len = L === 1 ? (Math.floor(12000 * kbps / sr) + pad) * 4 : Math.floor(spf / 8 * kbps * 1000 / sr) + pad;
+    return { ver, v1, L, kbps, sr, spf, len, ch: mode === 3 ? 1 : 2, mode };
+  }
+  async function mp3(blob, m, start, v1tag) {
+    const b = await bytes(blob, start, 1 << 17);
+    for (let i = 0; i + 4 < b.length; i++) {
+      const h = mpeg(b, i);
+      if (!h) continue;
+      // 下一帧也要对得上，避免把数据里碰巧出现的 FFE 当成帧头
+      const nx = i + h.len;
+      if (nx + 4 <= b.length && !mpeg(b, nx)) continue;
+      m.format = h.L === 3 ? 'MP3' : `MP${h.L}`;
+      m.codec = `MPEG-${h.ver === 3 ? '1' : h.ver === 2 ? '2' : '2.5'} Layer ${['', 'I', 'II', 'III'][h.L]}${['', ' · Joint Stereo', ' · Dual Channel', ''][h.mode]}`;
+      m.sampleRate = h.sr; m.channels = h.ch;
+      const audioBytes = blob.size - (start + i) - (v1tag ? 128 : 0);
+      const side = h.v1 ? (h.ch === 1 ? 17 : 32) : (h.ch === 1 ? 9 : 17), x = i + 4 + side, tag = ascii(b, x, 4);
+      let frames = null, vbytes = null, vbr = false;
+      if (tag === 'Xing' || tag === 'Info') {
+        const fl = be32(b, x + 4); let o = x + 8;
+        if (fl & 1) { frames = be32(b, o); o += 4; }
+        if (fl & 2) vbytes = be32(b, o);
+        vbr = tag === 'Xing';
+      } else if (ascii(b, i + 36, 4) === 'VBRI') { vbytes = be32(b, i + 46); frames = be32(b, i + 50); vbr = true; }
+      if (frames) {
+        m.duration = frames * h.spf / h.sr;
+        if (vbr) { m.bitrate = Math.round((vbytes || audioBytes) * 8 / m.duration / 1000); m.bitrateMode = 'VBR'; }
+        else { m.bitrate = h.kbps; m.bitrateMode = 'CBR'; }
+      } else {
+        // 没有 Xing / VBRI 头：看前面若干帧的码率是否一致，一致才按 CBR；否则等音频元素给出时长后再算平均码率
+        let j = i, same = true, cnt = 0;
+        while (cnt < 24 && j + 4 <= b.length) { const f = mpeg(b, j); if (!f) break; if (f.kbps !== h.kbps) same = false; j += f.len; cnt++; }
+        if (same) { m.bitrate = h.kbps; m.bitrateMode = 'CBR'; m.duration = audioBytes * 8 / (h.kbps * 1000); }
+        else { m.bitrateMode = 'VBR'; m.avgBytes = audioBytes; }
+      }
+      return;
+    }
+  }
+
+  // Vorbis comment（FLAC 与 Ogg 共用）：长度均为小端
+  function vorbis(b, i, m) {
+    const got = {};
+    if (i + 4 > b.length) return;
+    i += 4 + le32(b, i);
+    if (i + 4 > b.length) return;
+    let n = le32(b, i); i += 4;
+    for (; n > 0 && i + 4 <= b.length; n--) {
+      const L = le32(b, i); i += 4;
+      if (i + L > b.length) break;
+      const s = utf8.decode(b.subarray(i, i + L)); i += L;
+      const e = s.indexOf('=');
+      if (e < 1) continue;
+      const k = s.slice(0, e).toUpperCase(), v = s.slice(e + 1).trim();
+      if (v) (got[k] ||= []).push(v);
+    }
+    const one = (...ks) => { for (const k of ks) if (got[k]) return got[k].join(k === 'LYRICS' || k === 'UNSYNCEDLYRICS' ? '\n' : ' / '); return null; };
+    m.title ||= one('TITLE'); m.artist ||= one('ARTIST'); m.album ||= one('ALBUM');
+    m.albumArtist ||= one('ALBUMARTIST', 'ALBUM ARTIST'); m.lyrics ||= one('LYRICS', 'UNSYNCEDLYRICS');
+  }
+  async function flac(blob, m, start) {
+    let p = start + 4, last = false;
+    m.format = 'FLAC'; m.codec = 'Free Lossless Audio Codec';
+    while (!last && p + 4 <= blob.size) {
+      const h = await bytes(blob, p, 4), type = h[0] & 0x7f, n = be24(h, 1);
+      last = !!(h[0] & 0x80);
+      if (type === 0) {
+        const b = await bytes(blob, p + 4, n);
+        m.sampleRate = (b[10] << 12) | (b[11] << 4) | (b[12] >> 4);
+        m.channels = ((b[12] >> 1) & 7) + 1;
+        m.bits = (((b[12] & 1) << 4) | (b[13] >> 4)) + 1;
+        const total = (b[13] & 15) * 2 ** 32 + be32(b, 14);
+        if (total && m.sampleRate) m.duration = total / m.sampleRate;
+      } else if (type === 4) vorbis(await bytes(blob, p + 4, n), 0, m);
+      p += 4 + n;
+    }
+    // 平均码率按音频帧的实际字节数算（不含元数据块和封面）
+    if (m.duration) { m.bitrate = Math.round((blob.size - p) * 8 / m.duration / 1000); m.bitrateMode = 'AVG'; }
+  }
+  async function wav(blob, m) {
+    let p = 12, byteRate = 0, data = 0;
+    m.format = 'WAV';
+    while (p + 8 <= blob.size) {
+      const h = await bytes(blob, p, 8), id = ascii(h, 0, 4), n = le32(h, 4);
+      if (id === 'fmt ') {
+        const b = await bytes(blob, p + 8, Math.min(n, 40)), tag = le16(b, 0);
+        m.channels = le16(b, 2); m.sampleRate = le32(b, 4); byteRate = le32(b, 8); m.bits = le16(b, 14);
+        m.codec = tag === 1 ? 'PCM' : tag === 3 ? 'IEEE Float' : tag === 0xfffe ? 'PCM · Extensible' : `Format 0x${tag.toString(16)}`;
+        m.bitrate = Math.round(byteRate * 8 / 1000); m.bitrateMode = 'CBR';
+      } else if (id === 'data') data = n;
+      else if (id === 'LIST') {
+        const b = await bytes(blob, p + 8, Math.min(n, 1 << 16));
+        if (ascii(b, 0, 4) === 'INFO') {
+          for (let i = 4; i + 8 <= b.length;) {
+            const k = ascii(b, i, 4), L = le32(b, i + 4), v = clean(legacy(b.subarray(i + 8, i + 8 + L)));
+            if (k === 'INAM') m.title ||= v; else if (k === 'IART') m.artist ||= v; else if (k === 'IPRD') m.album ||= v;
+            i += 8 + L + (L & 1);
+          }
+        }
+      }
+      p += 8 + n + (n & 1);
+    }
+    if (byteRate && data) m.duration = data / byteRate;
+  }
+  // Ogg：把前几页拼回逻辑包（注释包可能跨页），只看第一条逻辑流
+  async function ogg(blob, m) {
+    const b = await bytes(blob, 0, 1 << 18), packets = [];
+    let cur = [], p = 0;
+    const flush = () => { const n = cur.reduce((a, x) => a + x.length, 0), o = new Uint8Array(n); let q = 0; for (const x of cur) { o.set(x, q); q += x.length; } packets.push(o); cur = []; };
+    while (p + 27 <= b.length && packets.length < 2 && ascii(b, p, 4) === 'OggS') {
+      const ns = b[p + 26]; let q = p + 27 + ns;
+      for (let k = 0; k < ns && packets.length < 2; k++) { const L = b[p + 27 + k]; cur.push(b.subarray(q, q + L)); q += L; if (L < 255) flush(); }
+      p = q;
+    }
+    if (cur.length && packets.length < 2) flush();
+    const [a, c] = packets;
+    if (!a) return;
+    if (ascii(a, 1, 6) === 'vorbis') {
+      m.format = 'OGG'; m.codec = 'Vorbis'; m.channels = a[11]; m.sampleRate = le32(a, 12);
+      const nom = le32(a, 20) | 0;
+      if (nom > 0) { m.bitrate = Math.round(nom / 1000); m.bitrateMode = 'NOM'; }
+      if (c && ascii(c, 1, 6) === 'vorbis') vorbis(c, 7, m);
+    } else if (ascii(a, 0, 8) === 'OpusHead') {
+      // Opus 一律以 48 kHz 解码
+      m.format = 'OPUS'; m.codec = 'Opus'; m.channels = a[9]; m.sampleRate = 48000;
+      if (c && ascii(c, 0, 8) === 'OpusTags') vorbis(c, 8, m);
+    }
+  }
+  const ILST = { '\xa9nam': 'title', '\xa9ART': 'artist', '\xa9alb': 'album', aART: 'albumArtist', '\xa9lyr': 'lyrics' };
+  const MP4_KIDS = new Set(['moov', 'trak', 'mdia', 'minf', 'stbl', 'udta', 'ilst']);
+  async function mp4(blob, m) {
+    let p = 0, moov = null, mdat = 0;
+    while (p + 8 <= blob.size) {
+      const h = await bytes(blob, p, 16), t = ascii(h, 4, 4);
+      let n = be32(h, 0), hl = 8;
+      if (n === 1) { n = be32(h, 8) * 2 ** 32 + be32(h, 12); hl = 16; } else if (n === 0) n = blob.size - p;
+      if (n < hl) break;
+      if (t === 'moov') moov = await bytes(blob, p + hl, n - hl);
+      else if (t === 'mdat') mdat += n - hl;
+      p += n;
+    }
+    if (!moov) return;
+    const b = moov;
+    const walk = (a, z, fn) => { for (let i = a; i + 8 <= z;) { const n = be32(b, i); if (n < 8 || i + n > z) break; fn(ascii(b, i + 4, 4), i + 8, i + n); i += n; } };
+    const visit = (a, z) => walk(a, z, (t, s, e) => {
+      if (t === 'mvhd') {
+        const v = b[s], ts = be32(b, s + (v ? 20 : 12)), d = v ? be32(b, s + 24) * 2 ** 32 + be32(b, s + 28) : be32(b, s + 16);
+        if (ts) m.duration = d / ts;
+      } else if (t === 'stsd' && !m.codec) {
+        const ft = ascii(b, s + 12, 4), d = s + 16;
+        if (ft === 'mp4a' || ft === 'alac') {
+          m.codec = ft === 'mp4a' ? 'AAC' : 'ALAC';
+          m.channels = be16(b, d + 16); m.bits = be16(b, d + 18) || null; m.sampleRate = be16(b, d + 24) || null;
+        }
+      } else if (t === 'meta') visit(s + 4, e);
+      else if (MP4_KIDS.has(t)) visit(s, e);
+      else if (ILST[t]) walk(s, e, (dt, ds, de) => { if (dt === 'data' && be32(b, ds) === 1) m[ILST[t]] ||= clean(utf8.decode(b.subarray(ds + 8, de))); });
+    });
+    visit(0, b.length);
+    m.format = m.codec === 'ALAC' ? 'ALAC' : m.codec === 'AAC' ? 'AAC' : 'MP4';
+    if (m.duration && mdat) { m.bitrate = Math.round(mdat * 8 / m.duration / 1000); m.bitrateMode = 'AVG'; }
+  }
+
+  async function parse(blob) {
+    const m = {
+      title: null, artist: null, album: null, albumArtist: null, format: null, codec: null,
+      bitrate: null, bitrateMode: null, sampleRate: null, channels: null, bits: null, duration: null, lyrics: null, avgBytes: null,
+    };
+    try {
+      const head = await bytes(blob, 0, 12), sig = ascii(head, 0, 4);
+      if (sig === 'RIFF' && ascii(head, 8, 4) === 'WAVE') await wav(blob, m);
+      else if (sig === 'OggS') await ogg(blob, m);
+      else if (ascii(head, 4, 4) === 'ftyp') await mp4(blob, m);
+      else {
+        const end = await id3v2(blob, m);
+        if (ascii(await bytes(blob, end, 4), 0, 4) === 'fLaC') await flac(blob, m, end);
+        else await mp3(blob, m, end, await id3v1(blob, m));
+      }
+    } catch (e) { console.warn('metadata parse failed', e); }
+    return m;
+  }
+  return { parse, decodeAny, bytes };
+})();
+
+// LRC：[mm:ss.xx] 可以一行多个；[ti:] [ar:] [al:] [offset:] 为标签；逐字时间 <mm:ss.xx> 去掉
+function parseLrc(text) {
+  const lines = [], tags = {};
+  let offset = 0;
+  for (const raw of String(text).split(/\r?\n/)) {
+    let s = raw.trim(), mm;
+    const times = [];
+    while ((mm = /^\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\]/.exec(s))) {
+      times.push(+mm[1] * 60 + +mm[2] + (mm[3] ? +mm[3] / 10 ** mm[3].length : 0));
+      s = s.slice(mm[0].length);
+    }
+    if (times.length) {
+      const t = s.replace(/<\d+:\d+(?:[.:]\d+)?>/g, '').trim();
+      for (const x of times) lines.push({ t: x, text: t });
+      continue;
+    }
+    const tg = /^\[([a-z#]+):(.*)\]$/i.exec(s);
+    if (tg) {
+      const k = tg[1].toLowerCase();
+      if (k === 'offset') offset = (+tg[2] || 0) / 1000; else if (tg[2].trim()) tags[k] = tg[2].trim();
+    }
+  }
+  if (!lines.length) return null;
+  // offset 为正表示歌词提前出现
+  for (const L of lines) L.t = Math.max(0, L.t - offset);
+  lines.sort((a, b) => a.t - b.t);
+  return { lines, tags };
+}
+
+// ---------- 播放：<audio> → MediaElementSource → 音量 → 输出；另一路经分离器进左右两个分析器 ----------
+const el = document.createElement('audio');
+el.preload = 'auto';
+const AU = { ctx: null, gain: null, an: [], td: [new Float32Array(2048), new Float32Array(2048)], fd: [new Float32Array(1024), new Float32Array(1024)] };
+function initAudio() {
+  const ac = new (window.AudioContext || window.webkitAudioContext)();
+  const src = ac.createMediaElementSource(el);
+  // 先上混成立体声：单声道文件左右两路都显示同一信号，而不是右声道空着
+  const up = new GainNode(ac, { channelCount: 2, channelCountMode: 'explicit', channelInterpretation: 'speakers' });
+  const split = ac.createChannelSplitter(2);
+  AU.an = [0, 1].map(() => new AnalyserNode(ac, { fftSize: 2048, smoothingTimeConstant: .72, minDecibels: -96, maxDecibels: -6 }));
+  AU.gain = ac.createGain();
+  // 分析器接在音量之前：显示的是文件本身的信号，与播放音量无关
+  src.connect(AU.gain).connect(ac.destination);
+  src.connect(up).connect(split);
+  split.connect(AU.an[0], 0); split.connect(AU.an[1], 1);
+  AU.ctx = ac;
+  setVolume(cfg.vol, false);
+}
+// 浏览器要求用户操作后才能出声：任意点击 / 按键时恢复音频上下文
+const unlock = () => { if (AU.ctx && AU.ctx.state !== 'running') AU.ctx.resume(); };
+addEventListener('pointerdown', unlock, true);
+addEventListener('keydown', unlock, true);
+
+const tracks = [];
+let cur = -1, source = DEMO ? 'DEMO' : 'NONE', busy = null;
+const UI = { changedAt: -9, drag: null, dragFrac: 0, listOff: 0, hover: null, blocked: false, dropT: -9, notice: null, noticeT: -9 };
+const notice = (msg, color) => { UI.notice = { msg, color }; UI.noticeT = performance.now() / 1000; };
+const extOf = (n) => (/\.([^.\/\\]+)$/.exec(n) || [])[1]?.toLowerCase() || '';
+const baseOf = (n) => n.replace(/\.[^.\/\\]+$/, '');
+const AUDIO_EXT = new Set(['mp3', 'flac', 'wav', 'ogg', 'oga', 'opus', 'm4a', 'mp4', 'aac', 'weba', 'webm']);
+const track = () => tracks[cur] || null;
+
+function newTrack(blob, name, mime) {
+  return { blob, name, base: baseOf(name), ext: extOf(name), size: blob.size, mime: mime || blob.type || null, url: URL.createObjectURL(blob), meta: null, lrc: null, lrcSrc: null, dur: null, err: null };
+}
+// 歌词：同名 .lrc 优先，其次是文件内嵌、且带时间戳的歌词
+function attachEmbeddedLyrics(t) {
+  if (t.lrc || !t.meta || !t.meta.lyrics) return;
+  const l = parseLrc(t.meta.lyrics);
+  if (l) { t.lrc = l; t.lrcSrc = 'EMBEDDED'; }
+}
+// 递归收集拖入的文件夹
+async function collect(dt) {
+  const entries = [...dt.items].map(i => i.webkitGetAsEntry && i.webkitGetAsEntry()).filter(Boolean);
+  if (!entries.length) return [...dt.files];
+  const out = [];
+  const walk = async (en) => {
+    if (en.isFile) out.push(await new Promise((r, j) => en.file(r, j)));
+    else if (en.isDirectory) {
+      const rd = en.createReader();
+      for (let batch; (batch = await new Promise((r, j) => rd.readEntries(r, j))).length;) for (const c of batch) await walk(c);
+    }
+  };
+  for (const en of entries) await walk(en);
+  return out;
+}
+async function addFiles(files) {
+  const audio = [], lrcs = [];
+  for (const f of files) {
+    const ext = extOf(f.name);
+    if (ext === 'lrc') lrcs.push(f);
+    else if (AUDIO_EXT.has(ext) || (f.type || '').startsWith('audio/')) audio.push(f);
+  }
+  if (!audio.length && !lrcs.length) { notice('UNSUPPORTED · 没有可识别的音频或 LRC 文件', C.hot); return; }
+  // 本地文件进来时清掉演示曲目
+  if (audio.length && source === 'DEMO') { el.pause(); for (const t of tracks) URL.revokeObjectURL(t.url); tracks.length = 0; cur = -1; UI.listOff = 0; }
+  if (audio.length) source = 'LOCAL';
+  audio.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+  const added = audio.map(f => newTrack(f, f.name, f.type));
+  tracks.push(...added);
+  busy = `PARSING ${added.length} FILE${added.length > 1 ? 'S' : ''}`;
+  await Promise.all(added.map(async (t) => { t.meta = await META.parse(t.blob); }));
+  let unmatched = 0;
+  for (const f of lrcs) {
+    const lrc = parseLrc(META.decodeAny(new Uint8Array(await f.arrayBuffer())));
+    const t = tracks.find(t => t.base.toLowerCase() === baseOf(f.name).toLowerCase());
+    if (t && lrc) { t.lrc = lrc; t.lrcSrc = f.name; } else unmatched++;
+  }
+  for (const t of added) attachEmbeddedLyrics(t);
+  busy = null;
+  if (unmatched) notice(`LRC · ${unmatched} 个歌词文件没有同名音频`, C.mark);
+  else if (added.length) notice(`LOADED · ${added.length} TRACK${added.length > 1 ? 'S' : ''}${lrcs.length ? ` · ${lrcs.length} LRC` : ''}`, C.cool);
+  else notice(`LRC · 已匹配 ${lrcs.length} 个歌词文件`, C.cool);
+  if (added.length && (cur < 0 || !tracks[cur])) select(tracks.indexOf(added[0]), true);
+}
+
+function select(i, autoplay = !el.paused) {
+  if (!tracks.length) return;
+  cur = (i + tracks.length) % tracks.length;
+  const t = tracks[cur];
+  el.src = t.url;
+  UI.changedAt = performance.now() / 1000;
+  clips.fill(0); hold.fill(-Infinity);
+  // 让当前曲目在列表可见范围内
+  if (cur < UI.listOff) UI.listOff = cur; else if (cur >= UI.listOff + LIST.rows) UI.listOff = cur - LIST.rows + 1;
+  if (autoplay) play();
+}
+async function play() {
+  if (!track()) return;
+  if (!AU.ctx) initAudio();
+  try { await AU.ctx.resume(); await el.play(); UI.blocked = false; }
+  catch (e) { if (e.name === 'NotAllowedError') UI.blocked = true; }
+}
+const toggle = () => { if (!track()) { pickFiles(); return; } el.paused ? play() : el.pause(); };
+const step = (d) => { if (tracks.length) select(cur + d, !el.paused || UI.blocked); };
+const duration = () => { const t = track(); if (!t) return null; return isFinite(el.duration) && el.duration > 0 ? el.duration : t.meta && t.meta.duration; };
+function seek(frac) { const d = duration(); if (d && isFinite(el.duration)) el.currentTime = Math.max(0, Math.min(d - .05, frac * d)); }
+function setVolume(v, save = true) {
+  v = Math.max(0, Math.min(1, v));
+  if (AU.gain) AU.gain.gain.value = v * v;
+  if (save) applySettings({ vol: v }); else cfg.vol = v;
+}
+el.addEventListener('loadedmetadata', () => {
+  const t = track();
+  if (!t) return;
+  t.dur = el.duration;
+  // VBR 且没有帧数头的 MP3：用实际时长算平均码率
+  if (t.meta && t.meta.avgBytes && isFinite(el.duration) && el.duration > 0) { t.meta.bitrate = Math.round(t.meta.avgBytes * 8 / el.duration / 1000); t.meta.bitrateMode = 'AVG'; t.meta.avgBytes = null; }
+});
+el.addEventListener('ended', () => step(1));
+el.addEventListener('error', () => { const t = track(); if (t) { t.err = 'DECODE ERROR'; notice(`DECODE ERROR · 浏览器无法解码 ${t.name}`, C.heat); } });
+const pick = document.getElementById('pick');
+const pickFiles = () => pick.click();
+pick.addEventListener('change', () => { addFiles([...pick.files]); pick.value = ''; });
+addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; UI.dropT = performance.now() / 1000; });
+addEventListener('drop', async (e) => { e.preventDefault(); UI.dropT = -9; addFiles(await collect(e.dataTransfer)); });
+
+// ---------- 演示：离线合成三首示例曲，编码为带 INFO 标签的 WAV，再走和本地文件完全相同的解析与播放流程 ----------
+const DEMO_SONGS = [
+  {
+    file: 'demo-01-neon-drift.wav', tags: { INAM: 'Neon Drift', IART: 'HUD Synth Unit', IPRD: 'Demo Signals' },
+    bpm: 112, bars: 24, style: 'drive', prog: [[57, 0], [53, 1], [48, 1], [55, 1]],
+    lyr: [[0, 'signal acquired'], [2, 'city lights are running down the wire'], [4, 'every frame a pulse, every pulse a fire'], [6, 'hold the line, the static fades away'],
+      [8, '我们沿着光的方向漂流'], [10, '穿过午夜的扫描线'], [12, 'neon drift, neon drift'], [14, 'left channel, right channel, one heartbeat'],
+      [16, 'hold the line, the static fades away'], [18, '直到黎明把画面点亮'], [20, 'neon drift'], [22, 'signal lost']],
+  },
+  {
+    file: 'demo-02-glass-relay.wav', tags: { INAM: 'Glass Relay', IART: 'HUD Synth Unit', IPRD: 'Demo Signals' },
+    bpm: 128, bars: 24, style: 'relay', prog: [[50, 0], [46, 1], [53, 1], [48, 1]],
+    lyr: [[0, 'relay one, do you copy'], [2, 'echo on the left, answer on the right'], [4, 'glass towers bounce the call'], [6, 'every word arrives twice'],
+      [8, '玻璃塔之间来回传递'], [10, '一句话要说两遍'], [12, 'relay two, i copy'], [14, 'the delay is the message'],
+      [16, 'echo on the left, answer on the right'], [18, '信号在空气里折返'], [20, 'relay closed'], [22, 'over and out']],
+  },
+  {
+    file: 'demo-03-low-orbit.wav', tags: { INAM: 'Low Orbit · 低轨道', IART: 'HUD Synth Unit', IPRD: 'Demo Signals' },
+    bpm: 92, bars: 16, style: 'orbit', prog: [[52, 0], [48, 1], [55, 1], [50, 1]],
+    lyr: [[0, '慢慢升到低轨道'], [2, 'the planet turns below'], [4, '地平线是一条细线'], [6, 'quiet engines, quiet glow'],
+      [8, 'drifting over sleeping towns'], [10, '把城市的灯光收进口袋'], [12, 'one more orbit, then we land'], [14, '信号渐弱']],
+  },
+];
+const lrcTime = (t) => `[${String(Math.floor(t / 60)).padStart(2, '0')}:${(t % 60).toFixed(2).padStart(5, '0')}]`;
+const DEMO_LEAD = .25;
+async function renderSong(sp) {
+  const sr = 44100, beat = 60 / sp.bpm, bar = beat * 4, len = DEMO_LEAD + sp.bars * bar + 1.5;
+  const oc = new OfflineAudioContext(2, Math.ceil(len * sr), sr);
+  const out = oc.createDynamicsCompressor();
+  out.threshold.value = -16; out.ratio.value = 4; out.connect(oc.destination);
+  // 每种乐器一条声像固定的总线，左右声道的波形因此明显不同
+  const bus = (pan, gain) => { const g = oc.createGain(); g.gain.value = gain; g.connect(new StereoPannerNode(oc, { pan })).connect(out); return g; };
+  const B = {
+    bass: bus(0, .42), arp: bus(-.7, .15), pad: bus(.6, .12), kick: bus(0, .55), hat: bus(.75, .1), snare: bus(-.3, .26),
+    lead: bus(0, .1), echoL: bus(-.95, .07), echoR: bus(.95, .05),
+  };
+  const noise = oc.createBuffer(1, sr, sr);
+  { const d = noise.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1; }
+  const mtof = (m) => 440 * 2 ** ((m - 69) / 12);
+  const tone = (dest, type, m, t, d, v, cut, atk = .006) => {
+    const o = new OscillatorNode(oc, { type, frequency: mtof(m) }), g = oc.createGain();
+    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(v, t + atk); g.gain.exponentialRampToValueAtTime(.0005, t + d);
+    (cut ? o.connect(new BiquadFilterNode(oc, { frequency: cut, Q: 2 })) : o).connect(g).connect(dest);
+    o.start(t); o.stop(t + d + .02);
+  };
+  const hit = (dest, t, d, v, type, freq) => {
+    const n = new AudioBufferSourceNode(oc, { buffer: noise }), g = oc.createGain();
+    g.gain.setValueAtTime(v, t); g.gain.exponentialRampToValueAtTime(.001, t + d);
+    n.connect(new BiquadFilterNode(oc, { type, frequency: freq })).connect(g).connect(dest);
+    n.start(t, Math.random() * .5); n.stop(t + d + .02);
+  };
+  const kick = (t) => {
+    const o = oc.createOscillator(), g = oc.createGain();
+    o.frequency.setValueAtTime(150, t); o.frequency.exponentialRampToValueAtTime(42, t + .14);
+    g.gain.setValueAtTime(1, t); g.gain.exponentialRampToValueAtTime(.001, t + .38);
+    o.connect(g).connect(B.kick); o.start(t); o.stop(t + .4);
+  };
+  const orbit = sp.style === 'orbit';
+  for (let b = 0; b < sp.bars; b++) {
+    const t0 = DEMO_LEAD + b * bar, [root, maj] = sp.prog[b % sp.prog.length], ch = [0, maj ? 4 : 3, 7];
+    const intro = b < 2, outro = b >= sp.bars - 1, full = !intro && !outro;
+    for (const iv of ch) tone(B.pad, orbit ? 'sawtooth' : 'triangle', root + iv + (orbit ? 12 : 0), t0, bar * (orbit ? 1.6 : 1.1), 1, orbit ? 1400 : 0, orbit ? .6 : .2);
+    // 琶音：前奏就开始，驱动型曲子每拍四个音，轨道型每拍两个
+    const per = orbit ? 2 : 4;
+    for (let i = 0; i < 4 * per; i++) {
+      const m = root + 12 + ch[i % 3] + (i % 6 >= 3 ? 12 : 0);
+      tone(B.arp, 'square', m, t0 + i * beat / per, beat / per * 1.6, intro ? .5 : .9, 2600);
+    }
+    if (outro) continue;
+    for (let i = 0; i < 8; i++) {
+      if (intro && sp.style !== 'relay') break;
+      tone(B.bass, 'sawtooth', root - 24 + [0, 0, 12, 0, 0, 12, 0, 7][i], t0 + i * beat / 2, beat * .45, 1, 700);
+    }
+    if (!full) continue;
+    for (let q = 0; q < 4; q++) {
+      const t = t0 + q * beat;
+      if (!orbit || q === 0 || q === 2) kick(t);
+      if (orbit ? q === 2 : q % 2) hit(B.snare, t, .2, .9, 'bandpass', 1800);
+      hit(B.hat, t + beat / 2, .05, .9, 'highpass', 7000);
+      if (!orbit) hit(B.hat, t + beat / 4 * 3, .03, .5, 'highpass', 9000);
+    }
+    if (sp.style === 'drive') kick(t0 + 2.5 * beat);
+    // 接力：主旋律之后左、右各一次回声
+    if (sp.style === 'relay') {
+      for (const [at, iv] of [[0, 2], [1.5, 1], [2, 0], [3, 1]]) {
+        const m = root + 24 + ch[iv], t = t0 + at * beat;
+        tone(B.lead, 'sawtooth', m, t, beat * .8, 1, 3200);
+        tone(B.echoL, 'sawtooth', m, t + beat * .75, beat * .8, 1, 2400);
+        tone(B.echoR, 'sawtooth', m, t + beat * 1.5, beat * .8, 1, 1800);
+      }
+    }
+  }
+  const buf = await oc.startRendering();
+  // 归一化到 -1 dBFS
+  let pk = 0;
+  for (let c = 0; c < 2; c++) for (const v of buf.getChannelData(c)) pk = Math.max(pk, Math.abs(v));
+  if (pk > 0) for (let c = 0; c < 2; c++) { const d = buf.getChannelData(c), k = .891 / pk; for (let i = 0; i < d.length; i++) d[i] *= k; }
+  return buf;
+}
+// 16 位 PCM WAV，fmt 之后写一个 LIST/INFO 标签块（值为 UTF-8，以 \0 结尾）
+function wavBlob(buf, tags) {
+  const ch = buf.numberOfChannels, sr = buf.sampleRate, n = buf.length, enc = new TextEncoder();
+  const info = Object.entries(tags).map(([k, v]) => [k, enc.encode(v + '\0')]);
+  const infoLen = 4 + info.reduce((a, [, b]) => a + 8 + b.length + (b.length & 1), 0), dataLen = n * ch * 2;
+  const total = 12 + 24 + 8 + infoLen + 8 + dataLen, ab = new ArrayBuffer(total), v = new DataView(ab);
+  let p = 0;
+  const str = (s) => { for (const c of s) v.setUint8(p++, c.charCodeAt(0)); };
+  const u32 = (x) => { v.setUint32(p, x, true); p += 4; }, u16 = (x) => { v.setUint16(p, x, true); p += 2; };
+  str('RIFF'); u32(total - 8); str('WAVE');
+  str('fmt '); u32(16); u16(1); u16(ch); u32(sr); u32(sr * ch * 2); u16(ch * 2); u16(16);
+  str('LIST'); u32(infoLen); str('INFO');
+  for (const [k, b] of info) { str(k); u32(b.length); new Uint8Array(ab, p, b.length).set(b); p += b.length + (b.length & 1); }
+  str('data'); u32(dataLen);
+  const chans = [...Array(ch)].map((_, i) => buf.getChannelData(i));
+  for (let i = 0; i < n; i++) for (let c = 0; c < ch; c++) { const x = Math.max(-1, Math.min(1, chans[c][i])); v.setInt16(p, x < 0 ? x * 32768 : x * 32767, true); p += 2; }
+  return new Blob([ab], { type: 'audio/wav' });
+}
+async function loadDemo() {
+  // 离线渲染不占主线程，三首同时开始，按顺序加入列表
+  const jobs = DEMO_SONGS.map(renderSong);
+  for (let i = 0; i < DEMO_SONGS.length; i++) {
+    const sp = DEMO_SONGS[i];
+    busy = `SYNTHESIZING ${i + 1} / ${DEMO_SONGS.length}`;
+    const t = newTrack(wavBlob(await jobs[i], sp.tags), sp.file, 'audio/wav');
+    if (source !== 'DEMO') { URL.revokeObjectURL(t.url); return; }
+    t.meta = await META.parse(t.blob);
+    const bar = 240 / sp.bpm;
+    t.lrc = parseLrc(sp.lyr.map(([b, s]) => lrcTime(DEMO_LEAD + b * bar) + s).join('\n'));
+    t.lrcSrc = 'BUILT-IN';
+    tracks.push(t);
+    if (cur < 0) select(0, false);
+  }
+  busy = null;
+}
+if (DEMO) loadDemo();
+
+// ---------- 信号分析：峰值 / RMS / 削波计数 / 电平历史 / 频谱 ----------
+const LV = { peak: [null, null], rms: [null, null], hist: [new Float32Array(120).fill(-96), new Float32Array(120).fill(-96)], head: 0, acc: 0 };
+const clips = new Uint32Array(2), hold = new Float32Array(2).fill(-Infinity);
+const SPEC_N = 40, spec = [new Float32Array(SPEC_N), new Float32Array(SPEC_N)], specPk = [new Float32Array(SPEC_N), new Float32Array(SPEC_N)];
+const trail = [[], []];
+const db = (v) => v > 0 ? 20 * Math.log10(v) : -Infinity;
+const live = () => !!(AU.ctx && track() && !track().err);
+function analyse(dt) {
+  if (!live()) { LV.peak = [null, null]; LV.rms = [null, null]; return; }
+  const sr = AU.ctx.sampleRate;
+  for (let k = 0; k < 2; k++) {
+    const td = AU.td[k], fd = AU.fd[k];
+    trail[k].unshift(Float32Array.from(td)); if (trail[k].length > 3) trail[k].pop();
+    AU.an[k].getFloatTimeDomainData(td);
+    let pk = 0, sq = 0;
+    for (let i = 0; i < td.length; i++) { const a = Math.abs(td[i]); if (a > pk) pk = a; sq += td[i] * td[i]; if (a >= .999 && !el.paused) clips[k]++; }
+    LV.peak[k] = db(pk); LV.rms[k] = db(Math.sqrt(sq / td.length));
+    hold[k] = Math.max(LV.peak[k], (isFinite(hold[k]) ? hold[k] : -96) - dt * 12);
+    AU.an[k].getFloatFrequencyData(fd);
+    const bw = sr / 2048;
+    for (let j = 0; j < SPEC_N; j++) {
+      const f0 = 40 * (16000 / 40) ** (j / SPEC_N), f1 = 40 * (16000 / 40) ** ((j + 1) / SPEC_N);
+      const i0 = Math.round(f0 / bw), i1 = Math.max(i0, Math.round(f1 / bw) - 1);
+      let mx = -200;
+      for (let i = i0; i <= i1 && i < fd.length; i++) if (fd[i] > mx) mx = fd[i];
+      const v = Math.max(0, Math.min(1, (mx + 90) / 84));
+      spec[k][j] = v > spec[k][j] ? v : spec[k][j] + (v - spec[k][j]) * Math.min(1, dt * 10);
+      specPk[k][j] = Math.max(spec[k][j], specPk[k][j] - dt * .35);
+    }
+  }
+  LV.acc += dt;
+  if (LV.acc >= .05) {
+    LV.acc = 0;
+    for (let k = 0; k < 2; k++) LV.hist[k][LV.head] = Math.max(-96, LV.rms[k]);
+    LV.head = (LV.head + 1) % 120;
+  }
+}
+
+// ---------- canvas ----------
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d', { alpha: false });
+const bgLayer = document.createElement('canvas');
+let W, H, dpr, s, ox, oy, EL, ER;
+function resize() {
+  dpr = Math.min(window.devicePixelRatio || 1, 2);
+  W = innerWidth; H = innerHeight;
+  cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+  s = Math.min(W / 1920, H / (1080 + BOTTOM));
+  ox = (W - 1920 * s) / 2; oy = (H - (1080 + BOTTOM) * s) / 2;
+  EL = -ox / s; ER = 1920 + ox / s;
+  const ET = -oy / s, EB = (H - oy) / s;
+  bgLayer.width = cv.width; bgLayer.height = cv.height;
+  const b = bgLayer.getContext('2d');
+  const g = b.createRadialGradient(cv.width / 2, cv.height / 2, 0, cv.width / 2, cv.height / 2, Math.max(cv.width, cv.height) * .7);
+  g.addColorStop(0, C.bg0); g.addColorStop(1, C.bg1);
+  b.fillStyle = g; b.fillRect(0, 0, cv.width, cv.height);
+  b.setTransform(dpr * s, 0, 0, dpr * s, dpr * ox, dpr * oy);
+  b.fillStyle = alpha(C.fg, .045);
+  for (let x = Math.ceil(EL / 48) * 48; x < ER; x += 48)
+    for (let y = Math.ceil(ET / 48) * 48; y < EB; y += 48) b.fillRect(x - .75, y - .75, 1.5, 1.5);
+  build();
+  if (window.hudFx) window.hudFx.resize();
+}
+
+// ---------- geometry（与 index.html 相同的弧长参数化路径） ----------
+const lerp = (a, b, t) => a + (b - a) * t;
+class Path {
+  constructor(segs, n = 48) {
+    const p = [];
+    segs.forEach(([a, b, c, d], k) => {
+      for (let i = k ? 1 : 0; i <= n; i++) {
+        const t = i / n, m = 1 - t;
+        p.push({
+          x: m * m * m * a.x + 3 * m * m * t * b.x + 3 * m * t * t * c.x + t * t * t * d.x,
+          y: m * m * m * a.y + 3 * m * m * t * b.y + 3 * m * t * t * c.y + t * t * t * d.y,
+        });
+      }
+    });
+    const cum = [0];
+    for (let i = 1; i < p.length; i++) cum.push(cum[i - 1] + Math.hypot(p[i].x - p[i - 1].x, p[i].y - p[i - 1].y));
+    this.p = p; this.cum = cum; this.len = cum[cum.length - 1]; this.o = 1;
+    this.n = p.map((_, i) => {
+      const a = p[Math.max(0, i - 1)], b = p[Math.min(p.length - 1, i + 1)];
+      const dx = b.x - a.x, dy = b.y - a.y, l = Math.hypot(dx, dy) || 1;
+      return { x: -dy / l, y: dx / l };
+    });
+  }
+  outer(ref) {
+    this.o = 1;
+    const q = this.at(.5);
+    if (q.nx * (q.x - ref.x) + q.ny * (q.y - ref.y) < 0) this.o = -1;
+    return this;
+  }
+  idx(L) {
+    let lo = 0, hi = this.cum.length - 1;
+    while (hi - lo > 1) { const m = (lo + hi) >> 1; this.cum[m] <= L ? lo = m : hi = m; }
+    return lo;
+  }
+  at(u) {
+    u = Math.min(1, Math.max(0, u));
+    const L = u * this.len, i = this.idx(L), j = Math.min(i + 1, this.p.length - 1);
+    const f = (L - this.cum[i]) / ((this.cum[j] - this.cum[i]) || 1);
+    const a = this.p[i], b = this.p[j], na = this.n[i], nb = this.n[j];
+    let nx = lerp(na.x, nb.x, f), ny = lerp(na.y, nb.y, f);
+    const l = Math.hypot(nx, ny) || 1; nx /= l; ny /= l;
+    return { x: lerp(a.x, b.x, f), y: lerp(a.y, b.y, f), nx: nx * this.o, ny: ny * this.o, a: Math.atan2(-nx, ny), u };
+  }
+  samples(ua, ub) {
+    const out = [this.at(ua)], L0 = ua * this.len, L1 = ub * this.len;
+    for (let i = this.idx(L0) + 1; i < this.p.length && this.cum[i] < L1; i++)
+      out.push({ x: this.p[i].x, y: this.p[i].y, nx: this.n[i].x * this.o, ny: this.n[i].y * this.o, u: this.cum[i] / this.len });
+    out.push(this.at(ub));
+    return out;
+  }
+  trace(ua, ub, off = 0) {
+    this.samples(ua, ub).forEach((q, i) => {
+      const x = q.x + q.nx * off, y = q.y + q.ny * off;
+      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    });
+  }
+}
+function poly(pts, r = 14) {
+  const L = (a, b, t) => ({ x: lerp(a.x, b.x, t), y: lerp(a.y, b.y, t) });
+  const line = (a, b) => [a, L(a, b, 1 / 3), L(a, b, 2 / 3), b];
+  const segs = [];
+  let cur = pts[0];
+  for (let i = 1; i < pts.length - 1; i++) {
+    const a = pts[i - 1], p = pts[i], b = pts[i + 1];
+    const la = Math.hypot(p.x - a.x, p.y - a.y), lb = Math.hypot(b.x - p.x, b.y - p.y);
+    const ri = Array.isArray(r) ? r[i - 1] : r, cap = Array.isArray(r) ? .75 : .5;
+    const p1 = L(p, a, Math.min(ri, la * cap) / la), p2 = L(p, b, Math.min(ri, lb * cap) / lb);
+    segs.push(line(cur, p1), [p1, L(p1, p, .55), L(p2, p, .55), p2]);
+    cur = p2;
+  }
+  segs.push(line(cur, pts[pts.length - 1]));
+  return segs;
+}
+// 构图：侧视的飞翼（翼型剖面）。圆角前缘在左，最厚处包住圆环（进度、当前曲目、控制，环外上半圈是频谱），
+// 上下两层蒙皮向右收拢到尖锐的后缘：左声道示波器沿上蒙皮、右声道沿下蒙皮流向后缘；
+// 圆环右侧一根竖向翼梁挂歌词，播放列表与文件规格从下蒙皮垂下；前缘伸出的空速管上是标题
+const O = { x: 700, y: 470, r: 190 };
+const SPEC = { r0: O.r + 16, h: 56 };
+const WING = { le: { x: 400, y: 520 }, te: { x: 1860, y: 590 } };
+const LIST = { x: 530, y0: 816, row: 38, rows: 6 };
+const INFO = { x: 820, y0: 796, row: 32 };
+const LYR = { x: 1090, cy: 470, row: 38, w: 420 };
+const VOL = { x0: O.x - 54, x1: O.x + 54, y: O.y + 102 };
+const deg = (d) => d * Math.PI / 180;
+const polar = (a, r) => [O.x + Math.cos(deg(a)) * r, O.y + Math.sin(deg(a)) * r];
+const G = {};
+function build() {
+  const P = (x, y) => ({ x, y }), { le, te } = WING;
+  // 上蒙皮：前缘 → 最高点 → 缓降到后缘；下蒙皮：前缘 → 最低点 → 缓升到后缘
+  G.skin = [
+    new Path([[le, P(le.x, 330), P(520, 190), P(720, 180)], [P(720, 180), P(1000, 170), P(1400, 330), te]]).outer({ x: 1000, y: 600 }),
+    new Path([[le, P(le.x, 650), P(520, 730), P(740, 735)], [P(740, 735), P(1100, 740), P(1500, 660), te]]).outer({ x: 1000, y: 300 }),
+  ];
+  G.waveU = G.skin.map(S => [uAtX(S, 980), uAtX(S, 1800)]);
+  const yAt = (S, x) => S.at(uAtX(S, x)).y;
+  G.probe = new Path(poly([le, P(80, le.y)]));
+  G.list = new Path(poly([P(LIST.x, yAt(G.skin[1], LIST.x) + 4), P(LIST.x, 1040)]));
+  G.info = new Path(poly([P(INFO.x, yAt(G.skin[1], INFO.x) + 4), P(INFO.x, 1060)]));
+  G.lyr = new Path(poly([P(LYR.x, yAt(G.skin[0], LYR.x) + 4), P(LYR.x, yAt(G.skin[1], LYR.x) - 4)]));
+}
+function uAtX(P, x) {
+  let best = 0, bd = Infinity;
+  for (let i = 0; i < P.p.length; i++) { const d = Math.abs(P.p[i].x - x); if (d < bd) { bd = d; best = i; } }
+  return P.cum[best] / P.len;
+}
+addEventListener('resize', resize);
+
+// ---------- draw helpers ----------
+function seg(x1, y1, x2, y2, c, w) { ctx.strokeStyle = c; ctx.lineWidth = w; ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke(); }
+function dot(x, y, r, c) { ctx.fillStyle = c; ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.fill(); }
+function ring(x, y, r, c, w = 1.5) { ctx.strokeStyle = c; ctx.lineWidth = w; ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.stroke(); }
+function txt(str, x, y, font, color, align = 'left', a = 1, ls = 0) {
+  ctx.font = font; ctx.fillStyle = color; ctx.textAlign = align; ctx.globalAlpha = a;
+  if (ls) ctx.letterSpacing = ls + 'px';
+  ctx.fillText(str, x, y);
+  if (ls) ctx.letterSpacing = '0px';
+  ctx.globalAlpha = 1;
+}
+const flicker = (t) => (Math.sin(t * 23) > .93 || Math.sin(t * 7.3) > .97) ? .25 : .9;
+function glitchText(str, x, y, font, align = 'left') {
+  const now = performance.now() / 1000, jump = (now * 1.7) % 1 < .05 ? Math.sin(now * 90) * 5 : 0;
+  txt(str, x + jump - 1.5, y, font, C.hot, align, .45);
+  txt(str, x + jump + 1.5, y, font, C.cool, align, .45);
+  txt(str, x + jump, y, font, C.fg, align, flicker(now));
+}
+function stroke(P, ua, ub, color, w, off = 0) { ctx.strokeStyle = color; ctx.lineWidth = w; ctx.beginPath(); P.trace(ua, ub, off); ctx.stroke(); }
+function fit(str, maxW) {
+  if (ctx.measureText(str).width <= maxW) return str;
+  while (str.length > 1 && ctx.measureText(str + '…').width > maxW) str = str.slice(0, -1);
+  return str + '…';
+}
+function endDot(P) {
+  const q = P.at(1), ex = q.x < 960 ? Math.min(q.x, EL + 60) : Math.max(q.x, ER - 60);
+  if (ex !== q.x) seg(q.x, q.y, ex, q.y, C.line, 1.25);
+  dot(ex, q.y, 4, C.fg);
+}
+// 信号脉冲：一小段亮线沿路径向外跑，跑完停顿一会儿
+function pulse(P, t, speed, phase) {
+  const cyc = P.len / speed * 1.6, f = ((t + phase * cyc) % cyc) / cyc * 1.6;
+  if (f > 1) return;
+  ctx.globalAlpha = Math.sin(Math.PI * f) * .85;
+  stroke(P, Math.max(0, f - 46 / P.len), f, C.fg, 1.5);
+  ctx.globalAlpha = 1;
+}
+const GLYPHS = '01#%&/<>=+*:░▒';
+const scramble = (str, p) => p <= 0 ? str : str.replace(/[^\s·/]/g, (ch) => Math.random() < p ? GLYPHS[(Math.random() * GLYPHS.length) | 0] : ch);
+const fmtT = (t) => {
+  if (t == null || !isFinite(t)) return '--:--';
+  t = Math.max(0, t);
+  const h = Math.floor(t / 3600), m = Math.floor(t / 60) % 60, x = Math.floor(t % 60);
+  return h ? `${h}:${String(m).padStart(2, '0')}:${String(x).padStart(2, '0')}` : `${m}:${String(x).padStart(2, '0')}`;
+};
+const fmtDb = (v) => v == null ? null : isFinite(v) && v > -96 ? v.toFixed(1) : '-INF';
+const fmtSize = (b) => b >= 1 << 30 ? (b / 2 ** 30).toFixed(2) + ' GB' : b >= 1 << 20 ? (b / 2 ** 20).toFixed(2) + ' MB' : (b / 1024).toFixed(0) + ' KB';
+const dbFrac = (v) => v == null || !isFinite(v) ? 0 : Math.max(0, Math.min(1, (v + 60) / 60));
+const chColor = (k) => k ? C.hot : C.cool;
+
+// ---------- 交互区域：每帧绘制时登记，指针事件按上一帧的区域命中 ----------
+let HITS = [], hitsNext = [];
+function hit(id, x, y, w, h, opt = {}) { hitsNext.push({ id, x, y, w, h, ...opt }); }
+const hov = (id) => UI.hover === id;
+// 指针相对环心的进度比例：正上方为 0，顺时针
+const ringFrac = (x, y) => ((Math.atan2(y - O.y, x - O.x) + Math.PI / 2) / TAU + 1) % 1;
+
+// ---------- components ----------
+function header(now) {
+  // 空速管：从前缘向左伸出，上方是标题，下方两行状态
+  stroke(G.probe, 0, 1, C.line, 1.25);
+  dot(80, WING.le.y, 3.5, C.fg);
+  const y = WING.le.y;
+  txt('AUDIO DECK', 96, y - 22, `17px ${F.disp}`, C.fg, 'left', 1, 3);
+  const t = track();
+  let l1, l2, col = C.dim, dc;
+  if (UI.notice && now - UI.noticeT < 4) { [l1, l2 = ''] = UI.notice.msg.split(' · '); col = dc = UI.notice.color; }
+  else if (busy) { l1 = source === 'DEMO' ? 'DEMO · 合成示例曲' : 'LOCAL FILES'; l2 = busy; dc = C.mark; }
+  else if (!tracks.length) { l1 = 'NO SIGNAL'; l2 = '拖入音频文件或按 O 选择'; dc = col = C.hot; }
+  else {
+    l1 = `${source === 'DEMO' ? 'DEMO · 合成示例曲' : 'LOCAL FILES'} · ${tracks.length} TRACK${tracks.length > 1 ? 'S' : ''}`;
+    l2 = UI.blocked || (el.paused && !el.currentTime) ? 'READY · 点击 ▶ 或按空格播放' : el.paused ? 'PAUSED' : 'PLAYING';
+    dc = source === 'DEMO' ? C.mark : t && t.err ? C.heat : C.cool;
+  }
+  dot(100, y + 22, 3, dc);
+  if (!tracks.length || busy) { ctx.globalAlpha = .35 + .35 * Math.sin(now * 2.5); ring(100, y + 22, 6, dc, 1); ctx.globalAlpha = 1; }
+  ctx.font = `11px ${F.mono}`;
+  txt(fit(l1, 270), 112, y + 22, `11px ${F.mono}`, col);
+  ctx.font = `11px ${F.ui}`;
+  txt(fit(l2, 270), 112, y + 40, `11px ${F.ui}`, col === C.dim ? C.dim : col, 'left', .85);
+}
+
+// 圆环：120 格进度，内侧两段弧是左右声道 RMS，外侧上半圈是频谱
+function deck(now) {
+  const t = track(), d = duration(), n = 120, r = O.r;
+  const pos = UI.drag === 'seek' ? UI.dragFrac : d ? el.currentTime / d : 0;
+  ring(O.x, O.y, r + 8, C.line, 1);
+  ring(O.x, O.y, r - 8, C.faint, 1);
+  ctx.lineWidth = 7;
+  const hi = Math.round((Math.sin(now * 2.2) * .5 + .5) * (n - 1));
+  for (let i = 0; i < n; i++) {
+    const a0 = -Math.PI / 2 + i / n * TAU;
+    let col = C.fg, al = .1;
+    if (!t || !d) { col = C.hot; al = i === hi ? .8 : .14; }
+    else if (i < Math.floor(pos * n)) { col = C.hot; al = 1; }
+    else if (i === Math.floor(pos * n)) { col = C.hot; al = .2 + .8 * (pos * n % 1); }
+    ctx.strokeStyle = col; ctx.globalAlpha = al;
+    ctx.beginPath(); ctx.arc(O.x, O.y, r, a0, a0 + TAU / n * .62); ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+  if (t && d) {
+    const [x0, y0] = polar(pos * 360 - 90, r - 14), [x1, y1] = polar(pos * 360 - 90, r + 14), [x2, y2] = polar(pos * 360 - 90, r + 20);
+    seg(x0, y0, x1, y1, C.fg, 1.5); dot(x2, y2, 2.5, C.mark);
+    // 悬停 / 拖动：环外标出目标时间
+    if (UI.drag === 'seek' || hov('seek')) {
+      const f = UI.drag === 'seek' ? UI.dragFrac : UI.hoverFrac, [hx, hy] = polar(f * 360 - 90, r + 34);
+      const [ax, ay] = polar(f * 360 - 90, r + 10), [bx, by] = polar(f * 360 - 90, r + 22);
+      seg(ax, ay, bx, by, C.mark, 1);
+      txt(fmtT(f * d), hx, hy, `11px ${F.mono}`, C.mark, 'center');
+    }
+  }
+  hit('seek', O.x - r - 16, O.y - r - 16, 2 * r + 32, 2 * r + 32, {
+    cursor: 'pointer', drag: 'seek', test: (x, y) => Math.abs(Math.hypot(x - O.x, y - O.y) - r) < 15,
+  });
+  // 左右声道 RMS：左弧从左下向上，右弧从右下向上
+  const lr = r - 16;
+  for (let k = 0; k < 2; k++) {
+    const a0 = deg(k ? 80 : 100), span = deg(160) * (k ? -1 : 1);
+    ctx.lineWidth = 3; ctx.strokeStyle = C.faint;
+    ctx.beginPath(); ctx.arc(O.x, O.y, lr, a0, a0 + span, k === 1); ctx.stroke();
+    if (live()) {
+      const f = dbFrac(LV.rms[k]);
+      ctx.strokeStyle = chColor(k);
+      ctx.beginPath(); ctx.arc(O.x, O.y, lr, a0, a0 + span * f, k === 1); ctx.stroke();
+      const ha = a0 + span * dbFrac(hold[k]);
+      dot(O.x + Math.cos(ha) * lr, O.y + Math.sin(ha) * lr, 2.5, hold[k] > -1 ? C.heat : C.mark);
+    }
+  }
+  spectrum(now);
+  nowPlaying(now);
+  controls(now);
+}
+
+// 频谱：沿环外上半圈放射，左声道在左上（低频靠近水平线），右声道镜像在右上；正上方留出标题线的缺口
+function spectrum() {
+  const { r0, h } = SPEC, span = 78 / SPEC_N;
+  if (!live()) {
+    for (const k of [0, 1]) { const [x, y] = polar(k ? 315 : 225, r0 + 26); glitchText(`${k ? 'R' : 'L'} · SPECTRUM · NO SIGNAL`, x, y, `10px ${F.mono}`, k ? 'left' : 'right'); }
+    return;
+  }
+  ctx.lineWidth = 4.2;
+  for (let k = 0; k < 2; k++) {
+    ctx.strokeStyle = chColor(k); ctx.beginPath();
+    for (let j = 0; j < SPEC_N; j++) {
+      const a = deg(k ? 354 - (j + .5) * span : 186 + (j + .5) * span), c = Math.cos(a), sn = Math.sin(a);
+      const cells = Math.floor(spec[k][j] * h / 5);
+      for (let q = 0; q < cells; q++) { const ra = r0 + q * 5; ctx.moveTo(O.x + c * ra, O.y + sn * ra); ctx.lineTo(O.x + c * (ra + 3), O.y + sn * (ra + 3)); }
+    }
+    ctx.stroke();
+    ctx.strokeStyle = C.mark; ctx.beginPath();
+    for (let j = 0; j < SPEC_N; j++) {
+      const a = deg(k ? 354 - (j + .5) * span : 186 + (j + .5) * span), ra = r0 + specPk[k][j] * h;
+      ctx.moveTo(O.x + Math.cos(a) * ra, O.y + Math.sin(a) * ra); ctx.lineTo(O.x + Math.cos(a) * (ra + 1.5), O.y + Math.sin(a) * (ra + 1.5));
+    }
+    ctx.stroke();
+  }
+  // 频率刻度
+  for (const [f, l] of [[100, '100'], [1000, '1k'], [10000, '10k']]) {
+    const j = SPEC_N * Math.log(f / 40) / Math.log(16000 / 40);
+    for (const k of [0, 1]) {
+      const [x, y] = polar(k ? 354 - j * span : 186 + j * span, r0 + h + 14);
+      txt(l, x, y, `9px ${F.mono}`, C.dim, 'center', .8);
+    }
+  }
+}
+
+function nowPlaying(now) {
+  const t = track(), m = t && t.meta, x = O.x;
+  const sc = Math.max(0, 1 - (now - UI.changedAt) / .5);
+  txt(t ? `NOW PLAYING   ${String(cur + 1).padStart(2, '0')} / ${String(tracks.length).padStart(2, '0')}` : 'NOW PLAYING', x, O.y - 152, `600 9px ${F.ui}`, C.dim, 'center', 1, 3);
+  if (!t) {
+    glitchText('NO SIGNAL', x, O.y - 100, `24px ${F.disp}`, 'center');
+    glitchText('ARTIST · NO SIGNAL', x, O.y - 62, `11px ${F.ui}`, 'center');
+  } else {
+    // 标题：标签里的标题 > LRC 的 [ti:] > 文件名（注明来源）
+    const title = (m && m.title) || (t.lrc && t.lrc.tags.ti) || t.base;
+    const from = m && m.title ? null : t.lrc && t.lrc.tags.ti ? 'TITLE FROM LRC' : 'TITLE FROM FILE NAME';
+    let size = 26;
+    ctx.font = `${size}px ${F.disp}`;
+    while (size > 16 && ctx.measureText(title).width > 270) { size -= 2; ctx.font = `${size}px ${F.disp}`; }
+    txt(scramble(fit(title, 270), sc), x, O.y - 100, `${size}px ${F.disp}`, C.fg, 'center');
+    if (from) txt(from, x, O.y - 132, `600 8px ${F.ui}`, C.mark, 'center', .8, 2);
+    const artist = (m && (m.artist || m.albumArtist)) || (t.lrc && t.lrc.tags.ar) || null;
+    ctx.font = `15px ${F.ui}`;
+    if (artist) txt(fit(artist, 300), x, O.y - 62, `15px ${F.ui}`, C.fg, 'center');
+    else glitchText('ARTIST · NO SIGNAL', x, O.y - 62, `11px ${F.ui}`, 'center');
+    const album = (m && m.album) || (t.lrc && t.lrc.tags.al) || null;
+    ctx.font = `12px ${F.ui}`;
+    if (album) txt(fit(album, 300), x, O.y - 38, `12px ${F.ui}`, C.dim, 'center');
+    else glitchText('ALBUM · NO SIGNAL', x, O.y - 38, `10px ${F.ui}`, 'center');
+  }
+  // 时间落在穿过环心的水平线上：已播放 | 总长
+  const d = duration();
+  seg(O.x - O.r + 26, O.y, O.x - 92, O.y, C.faint, 1);
+  seg(O.x + 92, O.y, O.x + O.r - 26, O.y, C.faint, 1);
+  ring(O.x, O.y, 3, C.fg, 1.25);
+  if (t && d) {
+    const p = UI.drag === 'seek' ? UI.dragFrac * d : el.currentTime;
+    txt(fmtT(p), O.x - 12, O.y, `22px ${F.mono}`, C.fg, 'right');
+    txt(fmtT(d), O.x + 12, O.y, `22px ${F.mono}`, C.dim, 'left');
+  } else glitchText(t ? 'LENGTH · NO SIGNAL' : '--:--', O.x, O.y + 22, `10px ${F.mono}`, 'center');
+}
+
+// 控制：播放键是一个小圆环，上一首 / 下一首和载入只画图标与文字，悬停时点亮
+function controls(now) {
+  const y = O.y + 56, t = track(), playing = t && !el.paused;
+  const tri = (x, dir, sz) => { ctx.beginPath(); ctx.moveTo(x - dir * sz * .5, y - sz * .6); ctx.lineTo(x + dir * sz * .6, y); ctx.lineTo(x - dir * sz * .5, y + sz * .6); ctx.closePath(); ctx.fill(); };
+  const glyphCol = (id) => !t ? C.dim : hov(id) ? C.hot : C.fg;
+  ctx.fillStyle = glyphCol('prev'); tri(O.x - 60, -1, 10); ctx.fillRect(O.x - 69, y - 6, 2, 12);
+  hit('prev', O.x - 82, y - 16, 34, 32, { cursor: 'pointer', click: () => step(-1) });
+  ctx.fillStyle = glyphCol('next'); tri(O.x + 60, 1, 10); ctx.fillRect(O.x + 67, y - 6, 2, 12);
+  hit('next', O.x + 48, y - 16, 34, 32, { cursor: 'pointer', click: () => step(1) });
+  const ph = hov('play');
+  if (playing || ph) dot(O.x, y, 21, alpha(C.hot, ph ? .16 : .08));
+  ring(O.x, y, 21, playing || ph ? C.hot : C.line, 1.5);
+  ctx.fillStyle = playing ? C.hot : t ? C.fg : C.dim;
+  if (playing) { ctx.fillRect(O.x - 6, y - 7, 4, 14); ctx.fillRect(O.x + 2, y - 7, 4, 14); }
+  else tri(O.x + 2, 1, 13);
+  // 等待用户点击播放时，外圈虚线旋转
+  if (t && el.paused && (UI.blocked || !el.currentTime)) {
+    ctx.save(); ctx.translate(O.x, y); ctx.rotate(now * .8); ctx.setLineDash([4, 5]);
+    ring(0, 0, 27, alpha(C.mark, .5 + .3 * Math.sin(now * 4)), 1); ctx.setLineDash([]); ctx.restore();
+  }
+  hit('play', O.x - 24, y - 24, 48, 48, { cursor: 'pointer', click: toggle });
+  // 音量：14 格，可点击、拖动或滚轮
+  const n = 14, w = (VOL.x1 - VOL.x0) / n, v = cfg.vol, vh = hov('vol') || UI.drag === 'vol';
+  txt('VOL', VOL.x0, VOL.y - 14, `600 8px ${F.ui}`, C.dim, 'left', 1, 2);
+  txt(`${Math.round(v * 100)}%`, VOL.x1, VOL.y - 14, `10px ${F.mono}`, vh ? C.fg : C.dim, 'right');
+  for (let i = 0; i < n; i++) {
+    ctx.fillStyle = C.mark; ctx.globalAlpha = i < Math.round(v * n) ? 1 : .16;
+    ctx.fillRect(VOL.x0 + i * w, VOL.y - 2 - i * .4, w * .6, 5 + i * .8);
+  }
+  ctx.globalAlpha = 1;
+  hit('vol', VOL.x0 - 6, VOL.y - 20, VOL.x1 - VOL.x0 + 12, 32, { cursor: 'pointer', drag: 'vol', wheel: (dy) => setVolume(cfg.vol - Math.sign(dy) * .05) });
+}
+
+// 声道：示波器沿蒙皮画，背后是 6 秒 RMS 历史的丝带（新的贴近圆环）；两层蒙皮向后缘收拢，振幅随之收窄
+function channel(k, now) {
+  const P = G.skin[k], [u0, u1] = G.waveU[k], amp = 56, col = chColor(k), ok = live();
+  stroke(P, 0, u0, C.line, 1.5);
+  stroke(P, u1, 1, C.line, 1.5);
+  if (k) dot(WING.te.x, WING.te.y, 4, C.fg);
+  const env = (f) => Math.min(1, f / .1) * Math.min(1, (1 - f) / .45);
+  const at = (f, v) => { const q = P.at(u0 + (u1 - u0) * f); return [q.x + q.nx * v, q.y + q.ny * v]; };
+  if (!ok) {
+    stroke(P, u0, u1, C.line, 1.25);
+    const [x, y] = at(.3, k ? 18 : 18);
+    glitchText(`${k ? 'R' : 'L'} · NO SIGNAL`, x, y, `10px ${F.mono}`, 'center');
+  } else {
+    const hist = LV.hist[k], N = 120;
+    ctx.beginPath();
+    for (let i = 0; i < N; i++) { const f = i / (N - 1), v = dbFrac(hist[(LV.head - 1 - i + N * 2) % N]) * amp * .9 * env(f); const [x, y] = at(f, v); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
+    for (let i = N - 1; i >= 0; i--) { const f = i / (N - 1), v = dbFrac(hist[(LV.head - 1 - i + N * 2) % N]) * amp * .9 * env(f); const [x, y] = at(f, -v); ctx.lineTo(x, y); }
+    ctx.closePath(); ctx.fillStyle = alpha(col, .07); ctx.fill();
+    stroke(P, u0, u1, C.line, 1);
+    // 上升沿过零触发；时间从圆环向外流
+    const td = AU.td[k], S = 1024;
+    let trig = 0;
+    for (let i = 1; i < td.length - S; i++) if (td[i - 1] < 0 && td[i] >= 0) { trig = i; break; }
+    const wave = (buf, a, lw) => {
+      ctx.globalAlpha = a; ctx.strokeStyle = col; ctx.lineWidth = lw; ctx.beginPath();
+      const pts = 260;
+      for (let j = 0; j <= pts; j++) {
+        const f = j / pts, v = Math.max(-1.1, Math.min(1.1, buf[trig + Math.floor(f * S)] || 0)), [x, y] = at(f, v * amp * env(f));
+        j ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+      }
+      ctx.stroke(); ctx.globalAlpha = 1;
+    };
+    trail[k].forEach((b, i) => wave(b, [.22, .1, .05][i], 1));
+    wave(td, 1, 1.5);
+  }
+  readout(k, ok);
+}
+// 读数：左声道在上蒙皮外侧，右声道在下蒙皮外侧，都靠近蒙皮最厚处
+function readout(k, ok) {
+  const x = 1180, y = k ? 846 : 112, col = chColor(k);
+  txt(k ? 'R' : 'L', x, y, `34px ${F.disp}`, col);
+  txt(k ? 'CH 2 · RIGHT · LOWER SKIN' : 'CH 1 · LEFT · UPPER SKIN', x, y - 32, `600 8px ${F.ui}`, col, 'left', 1, 2);
+  for (const [label, v, dx] of [['PEAK · dBFS', fmtDb(LV.peak[k]), 56], ['RMS · dBFS', fmtDb(LV.rms[k]), 166]]) {
+    txt(label, x + dx, y - 12, `600 8px ${F.ui}`, C.dim, 'left', 1, 2);
+    if (v == null) glitchText('NO SIGNAL', x + dx, y + 8, `11px ${F.mono}`);
+    else txt(v, x + dx, y + 8, `20px ${F.mono}`, C.fg);
+  }
+  const crest = ok && isFinite(LV.peak[k]) && isFinite(LV.rms[k]) ? `${(LV.peak[k] - LV.rms[k]).toFixed(1)} dB` : '--';
+  txt(`CREST ${crest}   ·   CLIP ${ok ? clips[k] : '--'}   ·   HOLD ${ok ? fmtDb(hold[k]) : '--'}   ·   RMS 6 s`, x + 276, y + 8, `10px ${F.mono}`, ok && clips[k] ? C.heat : C.dim);
+}
+
+// 脊线上的节点：当前项为空心环，其他为小点
+const node = (x, y, on) => on ? (dot(x, y, 4.5, C.bg), ring(x, y, 4.5, C.hot, 1.5)) : dot(x, y, 1.8, C.dim);
+
+function playlist() {
+  const { x, y0, row, rows } = LIST;
+  stroke(G.list, 0, 1, C.line, 1.25);
+  const ly = y0 - 40;
+  txt(`PLAYLIST · ${String(tracks.length).padStart(2, '0')}`, x - 16, ly, `600 9px ${F.ui}`, C.dim, 'right', 1, 2);
+  const total = tracks.reduce((a, t) => a + (t.dur || (t.meta && t.meta.duration) || 0), 0);
+  if (tracks.length) txt(fmtT(total), x + 16, ly, `10px ${F.mono}`, C.dim);
+  // 载入：列表标题左侧的文字按钮
+  const lh = hov('load');
+  txt('+ LOAD FILES', 96, ly, `600 10px ${F.ui}`, lh ? C.hot : C.dim, 'left', 1, 2);
+  if (lh) seg(96, ly + 10, 196, ly + 10, C.hot, 1);
+  hit('load', 90, ly - 13, 112, 26, { cursor: 'pointer', click: pickFiles });
+  if (!tracks.length) {
+    glitchText('NO SIGNAL', x - 16, y0 + 10, `14px ${F.disp}`, 'right');
+    txt('拖入音频文件或文件夹', x - 16, y0 + 40, `12px ${F.ui}`, C.dim, 'right');
+    txt('同名 .lrc 会自动匹配', x - 16, y0 + 60, `12px ${F.ui}`, C.dim, 'right');
+    txt('MP3 · FLAC · WAV · OGG · OPUS · M4A', x - 16, y0 + 84, `10px ${F.mono}`, C.dim, 'right');
+    return;
+  }
+  UI.listOff = Math.max(0, Math.min(UI.listOff, tracks.length - rows));
+  for (let r = 0; r < rows; r++) {
+    const i = UI.listOff + r, t = tracks[i];
+    if (!t) break;
+    const y = y0 + r * row, on = i === cur, h = hov('row' + i), m = t.meta || {};
+    if (on) seg(x - 12, y, x - 6, y, C.hot, 1.5);
+    node(x, y, on);
+    const title = m.title || (t.lrc && t.lrc.tags.ti) || t.base, font = `${on ? 600 : 400} 14px ${F.ui}`;
+    ctx.font = font;
+    txt(fit(title, 340), x - 18, y, font, on || h ? C.fg : t.err ? C.heat : alpha(C.fg, .72), 'right');
+    const sub = [m.artist || null, (m.format || t.ext.toUpperCase()) + (t.lrc ? ' · LRC' : '')].filter(Boolean).join('   ·   ');
+    ctx.font = `10px ${F.ui}`;
+    txt(fit(sub, 340), x - 18, y + 16, `10px ${F.ui}`, C.dim, 'right');
+    // 脊线右侧：序号（正在播放时换成实时电平柱）与时长
+    if (on && !el.paused && live()) {
+      for (let j = 0; j < 3; j++) {
+        const bh = 3 + dbFrac(j === 1 ? Math.max(LV.rms[0], LV.rms[1]) : LV.peak[j ? 1 : 0]) * 12;
+        ctx.fillStyle = C.hot; ctx.fillRect(x + 14 + j * 5, y + 6 - bh, 3, bh);
+      }
+    } else txt(String(i + 1).padStart(2, '0'), x + 14, y, `11px ${F.mono}`, on ? C.hot : C.dim);
+    txt(t.err ? 'ERR' : fmtT(t.dur || m.duration), x + 14, y + 16, `10px ${F.mono}`, t.err ? C.heat : C.dim);
+    hit('row' + i, 100, y - 12, x + 60 - 100, row - 4, { cursor: 'pointer', click: () => select(i, true) });
+  }
+  // 超出可见行数时，脊线上加粗显示可见范围
+  if (tracks.length > rows) {
+    const hh = rows * row, th = hh * rows / tracks.length, ty = y0 - 12 + (hh - th) * UI.listOff / (tracks.length - rows);
+    seg(x, ty, x, ty + th, C.dim, 3);
+  }
+  hit('list', 100, y0 - 12, x + 60 - 100, rows * row, { wheel: (dy) => { UI.listOff += Math.sign(dy); } });
+}
+
+// 文件规格：从下蒙皮垂下的脊线，标签在左，读数在右
+function info() {
+  const { x, y0, row } = INFO, t = track(), m = t && t.meta;
+  stroke(G.info, 0, 1, C.line, 1.25);
+  const rate = m && m.sampleRate ? `${(m.sampleRate / 1000).toFixed(m.sampleRate % 1000 ? 1 : 0)} kHz${m.bits ? ' / ' + m.bits + ' bit' : ''}` : null;
+  const rows = [
+    ['FORMAT', t ? (m && m.format) || (t.ext ? t.ext.toUpperCase() : null) : null],
+    [`BITRATE${m && m.bitrateMode ? ' · ' + m.bitrateMode : ''}`, m && m.bitrate ? `${m.bitrate} kbps` : null],
+    ['SIZE', t ? fmtSize(t.size) : null],
+    ['LENGTH', t && duration() ? fmtT(duration()) : null],
+    ['SAMPLE', rate],
+    ['CHANNELS', m && m.channels ? `${m.channels} · ${m.channels === 1 ? 'MONO' : m.channels === 2 ? 'STEREO' : 'MULTI'}` : null],
+    ['CODEC', m && m.codec],
+    ['FILE', t ? t.name : null],
+    ['MIME', t ? t.mime : null],
+  ];
+  rows.forEach(([label, v], i) => {
+    const y = y0 + i * row * .86;
+    dot(x, y, 1.8, v == null ? C.hot : C.dim);
+    txt(label, x - 14, y, `600 8px ${F.ui}`, C.dim, 'right', 1, 2);
+    if (v == null) glitchText('NO SIGNAL', x + 14, y, `10px ${F.mono}`);
+    else { ctx.font = `12px ${F.mono}`; txt(fit(v, 220), x + 14, y, `12px ${F.mono}`, i > 6 ? C.dim : C.fg); }
+  });
+  if (t && t.err) txt(t.err, x + 14, y0 + rows.length * row * .86, `600 9px ${F.ui}`, C.heat, 'left', flicker(performance.now() / 1000), 2);
+}
+
+// 歌词：挂在连接上下蒙皮的翼梁上，时间戳在左、文字在右。换行时直接跳到新位置，新的当前行以打字机效果逐字打出
+function lyrics(now) {
+  const t = track(), { x, cy, row, w } = LYR, lrc = t && t.lrc, y0 = cy - row * 3.5, y1 = cy + row * 4.5;
+  stroke(G.lyr, 0, 1, C.line, 1.25);
+  ctx.font = `600 9px ${F.ui}`;
+  txt(fit(lrc ? `LYRICS · ${t.lrcSrc}` : 'LYRICS', w), x + 16, G.lyr.at(0).y + 26, `600 9px ${F.ui}`, C.dim, 'left', 1, 2);
+  if (!lrc) {
+    glitchText('LYRICS · NO SIGNAL', x + 16, cy, `13px ${F.mono}`);
+    if (t) txt(`未找到同名 .lrc（${t.base}.lrc）或文件内嵌的时间轴歌词`, x + 16, cy + 26, `12px ${F.ui}`, C.dim);
+    return;
+  }
+  const time = el.currentTime, L = lrc.lines;
+  let ci = -1;
+  for (let i = 0; i < L.length; i++) { if (L[i].t <= time + .05) ci = i; else break; }
+  if (ci !== UI.lyrI || lrc !== UI.lyrSrc) { UI.lyrI = ci; UI.lyrSrc = lrc; UI.lyrT0 = now; }
+  const typed = now - UI.lyrT0;
+  for (let i = Math.max(0, ci - 3); i < Math.min(L.length, ci + 5); i++) {
+    const y = cy + (i - ci) * row;
+    if (y < y0 || y > y1) continue;
+    const on = i === ci, past = i < ci, d = Math.abs(i - ci);
+    const a = on ? 1 : past ? Math.max(.12, .5 - d * .1) : Math.max(.08, .32 - d * .05);
+    node(x, y, on);
+    // 时间戳：当前行刚切换时短暂乱码再落定
+    const ts = lrcTime(L[i].t).slice(1, -1);
+    txt(on ? scramble(ts, Math.max(0, 1 - typed / .3)) : ts, x - 16, y, `11px ${F.mono}`, on ? C.hot : C.dim, 'right', on ? 1 : a + .1);
+    const s = L[i].text || '· · ·';
+    if (on) {
+      const nxt = L[i + 1], dur = nxt ? nxt.t - L[i].t : 4;
+      // 打字速度：至少每秒 22 个字，并保证在本行时长的 60% 内打完
+      const cps = Math.max(22, s.length / Math.max(.15, Math.min(1.4, dur * .6)));
+      const shown = Math.min(s.length, Math.floor(typed * cps));
+      const font = `600 19px ${F.ui}`;
+      ctx.font = font;
+      const vis = fit(s, w).slice(0, shown);
+      txt(vis, x + 16, y, font, C.fg);
+      const cx = x + 16 + ctx.measureText(vis).width + 3;
+      // 光标：打字时常亮，打完后闪烁
+      if (shown < s.length || Math.sin(now * 6) > 0) { ctx.fillStyle = C.hot; ctx.fillRect(cx, y - 9, 8, 18); }
+      if (nxt) seg(x + 16, y + 17, x + 16 + Math.min(1, (time - L[i].t) / dur) * w, y + 17, alpha(C.hot, .5), 1);
+    } else {
+      const font = `15px ${F.ui}`;
+      ctx.font = font;
+      txt(fit(s, w), x + 16, y, font, C.fg, 'left', a);
+    }
+    hit('lyr' + i, x - 90, y - row / 2, w + 110, row, { cursor: 'pointer', click: () => { if (duration()) el.currentTime = L[i].t; } });
+  }
+  if (ci < 0) txt('· · ·', x + 16, cy, `15px ${F.ui}`, C.dim);
+}
+
+function dropOverlay(now) {
+  const a = Math.max(0, 1 - (now - UI.dropT) / .25);
+  if (a <= 0) return;
+  ctx.globalAlpha = a * .85; ctx.fillStyle = C.bg; ctx.fillRect(40, 40, 1840, 1000); ctx.globalAlpha = a;
+  ctx.strokeStyle = C.hot; ctx.lineWidth = 2; ctx.beginPath();
+  for (const [x, y, sx, sy] of [[60, 60, 1, 1], [1860, 60, -1, 1], [60, 1020, 1, -1], [1860, 1020, -1, -1]]) {
+    ctx.moveTo(x, y + sy * 40); ctx.lineTo(x, y); ctx.lineTo(x + sx * 40, y);
+  }
+  ctx.stroke();
+  txt('DROP TO LOAD', 960, 520, `30px ${F.disp}`, C.fg, 'center', a, 4);
+  txt('音频文件 · 文件夹 · 同名 .lrc 歌词', 960, 566, `14px ${F.ui}`, C.cool, 'center', a);
+  ctx.globalAlpha = 1;
+}
+
+// ---------- post fx：辉光 / 扫描线 / 曲面畸变（与 index.html 相同，去掉视差） ----------
+function fxNum(k, d) { const v = params.get(k); return v == null ? d : +v; }
+const FX = { glow: fxNum('glow', 0), scan: fxNum('scan', .4), curve: fxNum('curve', .5) };
+function createFx() {
+  const c = document.createElement('canvas');
+  const gl = c.getContext('webgl2', { alpha: false, antialias: false, depth: false, stencil: false });
+  if (!gl) return null;
+  const vs = `#version 300 es
+in vec2 p; out vec2 v_uv;
+void main() { v_uv = p * .5 + .5; gl_Position = vec4(p, 0., 1.); }`;
+  const fs = `#version 300 es
+precision highp float;
+uniform sampler2D u_tex;
+uniform float u_t, u_glow, u_scan, u_curve, u_dpr;
+in vec2 v_uv; out vec4 o;
+void main() {
+  vec2 c = v_uv * 2. - 1.;
+  float k = .1 * u_curve, r2 = dot(c, c);
+  vec2 cd = c * (1. + k * (1. - r2));
+  vec2 uv = vec2(cd.x * .5 + .5, .5 - cd.y * .5);
+  vec2 ca = cd * .0016 * u_curve * r2;
+  vec3 col = vec3(texture(u_tex, uv + ca).r, texture(u_tex, uv).g, texture(u_tex, uv - ca).b);
+  if (u_glow > 0.) {
+    vec3 bloom = textureLod(u_tex, uv, 2.).rgb * .55 + textureLod(u_tex, uv, 4.).rgb * .35 + textureLod(u_tex, uv, 6.).rgb * .3;
+    col += max(bloom - .045, 0.) * u_glow * 1.6;
+  }
+  float s = .5 + .5 * cos(gl_FragCoord.y * 6.2832 / (3. * u_dpr));
+  col *= 1. - u_scan * .5 * (1. - s);
+  float band = exp(-pow((fract(u_t * .06) - (1. - v_uv.y)) * 10., 2.));
+  col += (col * .3 + .01) * band * u_scan;
+  col *= 1. - .2 * u_curve * r2;
+  o = vec4(col, 1.);
+}`;
+  const sh = (type, src) => {
+    const x = gl.createShader(type); gl.shaderSource(x, src); gl.compileShader(x);
+    if (!gl.getShaderParameter(x, gl.COMPILE_STATUS)) { console.error(gl.getShaderInfoLog(x)); return null; }
+    return x;
+  };
+  const v = sh(gl.VERTEX_SHADER, vs), f = sh(gl.FRAGMENT_SHADER, fs);
+  if (!v || !f) return null;
+  const prog = gl.createProgram();
+  gl.attachShader(prog, v); gl.attachShader(prog, f); gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) { console.error(gl.getProgramInfoLog(prog)); return null; }
+  gl.useProgram(prog);
+  gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+  const loc = gl.getAttribLocation(prog, 'p');
+  gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+  gl.bindTexture(gl.TEXTURE_2D, gl.createTexture());
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  const U = (n) => gl.getUniformLocation(prog, n);
+  const uT = U('u_t'), uGlow = U('u_glow'), uScan = U('u_scan'), uCurve = U('u_curve'), uDpr = U('u_dpr');
+  gl.uniform1i(U('u_tex'), 0);
+  c.style.touchAction = 'none';
+  document.body.appendChild(c);
+  let mips = null;
+  const api = {
+    on: true,
+    resize() { c.width = cv.width; c.height = cv.height; gl.viewport(0, 0, c.width, c.height); },
+    set(on) { api.on = on; c.style.display = on ? 'block' : 'none'; cv.style.display = on ? 'none' : 'block'; },
+    render(t) {
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, cv);
+      const want = FX.glow > 0;
+      if (want !== mips) { mips = want; gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, want ? gl.LINEAR_MIPMAP_LINEAR : gl.LINEAR); }
+      if (want) gl.generateMipmap(gl.TEXTURE_2D);
+      gl.uniform1f(uT, t); gl.uniform1f(uGlow, FX.glow); gl.uniform1f(uScan, FX.scan);
+      gl.uniform1f(uCurve, FX.curve); gl.uniform1f(uDpr, dpr);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+    },
+  };
+  return api;
+}
+
+// ---------- 控制面板：主题、后处理、帧率上限（设置单独存一份，不影响遥测 HUD） ----------
+const SETTINGS_KEY = 'hud-player-settings-v1';
+const DEFAULTS = { theme: 'ember', fx: true, curve: .5, glow: 0, scan: .4, fps: 60, vol: .8 };
+const NUM_KEYS = Object.keys(DEFAULTS).filter(k => typeof DEFAULTS[k] === 'number');
+const URL_CFG = {};
+for (const k of NUM_KEYS) if (params.get(k) != null) URL_CFG[k] = +params.get(k);
+if (params.get('theme')) URL_CFG.theme = params.get('theme');
+if (params.get('fx') === '0') URL_CFG.fx = false;
+const cfg = { ...DEFAULTS, ...(() => { try { return JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}'); } catch { return {}; } })(), ...URL_CFG };
+
+const panel = (() => {
+  const sliders = [['curve', '曲率', 0, 1.5], ['glow', '辉光', 0, 1.5], ['scan', '扫描线', 0, 1]];
+  const el = document.createElement('div');
+  el.id = 'hud-panel'; el.hidden = true;
+  el.setAttribute('role', 'dialog'); el.setAttribute('aria-label', '播放器控制面板');
+  el.innerHTML = `
+    <header><span>CONTROL</span><button type="button" class="x" data-close aria-label="关闭">×</button></header>
+    <section><h3>主题</h3><div class="themes">${Object.keys(THEMES).map(n => `
+      <button type="button" data-theme="${n}"><i style="background:${THEMES[n].hot}"></i><i style="background:${THEMES[n].cool}"></i><i style="background:${THEMES[n].mark}"></i><span>${n}</span></button>`).join('')}
+    </div></section>
+    <section><h3>画面</h3>
+      <label class="tog"><span>后处理</span><input type="checkbox" data-k="fx"></label>
+      ${sliders.map(([k, l, mn, mx]) => `
+      <label class="sl"><span>${l}</span><output data-o="${k}"></output>
+        <input type="range" min="${mn}" max="${mx}" step=".05" data-k="${k}"></label>`).join('')}
+      <div class="fps" role="group" aria-label="帧率上限"><span>帧率上限</span><div class="seg">${[[0, '跟随'], [30], [60], [120], [144]].map(([v, l]) => `
+        <button type="button" data-fps="${v}">${l || v}</button>`).join('')}
+      </div></div>
+    </section>
+    <footer><button type="button" data-reset>恢复默认</button><span>P 打开 · Esc 关闭</span></footer>`;
+  const gear = document.createElement('button');
+  gear.id = 'hud-gear'; gear.type = 'button'; gear.setAttribute('aria-label', '打开控制面板');
+  gear.innerHTML = '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.2"/><path d="M5 2.5v3M10 6.5v3M7 10.5v3" stroke="currentColor" stroke-width="2"/></svg>';
+  document.body.append(el, gear);
+  const toggle = (open = el.hidden, focus = false) => { el.hidden = !open; gear.setAttribute('aria-expanded', String(open)); if (open && focus) el.querySelector('button, input')?.focus(); };
+  gear.addEventListener('click', () => toggle());
+  el.addEventListener('click', (e) => {
+    const t = e.target.closest('button');
+    if (!t) return;
+    if (t.dataset.close != null) toggle(false);
+    if (t.dataset.theme) applySettings({ theme: t.dataset.theme });
+    if (t.dataset.fps != null) applySettings({ fps: +t.dataset.fps });
+    if (t.dataset.reset != null) applySettings({ ...DEFAULTS, vol: cfg.vol });
+  });
+  el.addEventListener('input', (e) => {
+    const k = e.target.dataset.k;
+    if (k) applySettings({ [k]: e.target.type === 'checkbox' ? e.target.checked : +e.target.value });
+  });
+  el.addEventListener('keydown', (e) => { if (e.key === 'Escape') toggle(false); e.stopPropagation(); });
+  return {
+    el, gear, toggle,
+    sync() {
+      for (const inp of el.querySelectorAll('[data-k]')) {
+        const v = cfg[inp.dataset.k];
+        if (inp.type === 'checkbox') inp.checked = !!v; else inp.value = v;
+        if (inp.type === 'range') inp.style.setProperty('--p', `${(v - inp.min) / (inp.max - inp.min) * 100}%`);
+      }
+      for (const o of el.querySelectorAll('[data-o]')) o.textContent = Math.round(cfg[o.dataset.o] * 100) + '%';
+      for (const b of el.querySelectorAll('[data-theme]')) b.setAttribute('aria-pressed', String(b.dataset.theme === themeName));
+      for (const b of el.querySelectorAll('[data-fps]')) b.setAttribute('aria-pressed', String(+b.dataset.fps === cfg.fps));
+      el.querySelector('[data-k="fx"]').disabled = !window.hudFx;
+      for (const k of ['curve', 'glow', 'scan']) el.querySelector(`[data-k="${k}"]`).disabled = !window.hudFx || !cfg.fx;
+    },
+  };
+})();
+function applySettings(patch = {}, save = true) {
+  Object.assign(cfg, patch);
+  if (!THEMES[cfg.theme]) cfg.theme = 'ember';
+  if (cfg.theme !== themeName) setTheme(cfg.theme);
+  const r = document.documentElement.style;
+  for (const k of ['fg', 'dim', 'line', 'hot', 'cool', 'mark']) r.setProperty(`--hud-${k}`, C[k]);
+  r.setProperty('--hud-bg', alpha(C.bg, .96));
+  FX.curve = cfg.curve; FX.glow = cfg.glow; FX.scan = cfg.scan;
+  if (window.hudFx) window.hudFx.set(cfg.fx);
+  fpsCap = cfg.fps;
+  if (AU.gain) AU.gain.gain.value = cfg.vol * cfg.vol;
+  if (save) try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(cfg)); } catch {}
+  panel.sync();
+}
+
+// ---------- 输入：指针坐标先按后处理的曲面畸变换算回画布，再换成设计坐标 ----------
+function toDesign(cx, cy) {
+  let px = cx / W, py = cy / H;
+  if (window.hudFx && window.hudFx.on && FX.curve) {
+    const x = px * 2 - 1, y = py * 2 - 1, f = 1 + .1 * FX.curve * (1 - (x * x + y * y));
+    px = x * f * .5 + .5; py = y * f * .5 + .5;
+  }
+  return [(px * W - ox) / s, (py * H - oy) / s];
+}
+const findHit = (x, y, key) => {
+  for (let i = HITS.length - 1; i >= 0; i--) {
+    const h = HITS[i];
+    if ((!key || h[key]) && x >= h.x && x <= h.x + h.w && y >= h.y && y <= h.y + h.h && (!h.test || h.test(x, y))) return h;
+  }
+  return null;
+};
+const onHud = (e) => e.target === cv || e.target.tagName === 'CANVAS' || e.target === document.body;
+function dragTo(x, y) {
+  if (UI.drag === 'seek') UI.dragFrac = ringFrac(x, y);
+  else if (UI.drag === 'vol') setVolume(Math.round((x - VOL.x0) / (VOL.x1 - VOL.x0) * 20) / 20);
+}
+addEventListener('pointermove', (e) => {
+  const [x, y] = toDesign(e.clientX, e.clientY);
+  if (UI.drag) { dragTo(x, y); return; }
+  const h = onHud(e) ? findHit(x, y) : null;
+  UI.hover = h && h.id;
+  if (h && h.id === 'seek') UI.hoverFrac = ringFrac(x, y);
+  document.body.style.cursor = h && h.cursor ? h.cursor : '';
+});
+addEventListener('pointerdown', (e) => {
+  if (!onHud(e) || e.button !== 0) return;
+  const [x, y] = toDesign(e.clientX, e.clientY), h = findHit(x, y);
+  if (!h) return;
+  if (h.drag) { if (h.drag === 'seek' && !duration()) return; UI.drag = h.drag; dragTo(x, y); }
+  else if (h.click) h.click();
+});
+addEventListener('pointerup', () => {
+  if (UI.drag === 'seek') seek(UI.dragFrac);
+  if (UI.drag === 'vol') applySettings({});
+  UI.drag = null;
+});
+addEventListener('wheel', (e) => {
+  const [x, y] = toDesign(e.clientX, e.clientY);
+  const h = findHit(x, y, 'wheel');
+  if (h) h.wheel(e.deltaY);
+}, { passive: true });
+addEventListener('keydown', (e) => {
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  const k = e.key.toLowerCase();
+  if (k === ' ') { e.preventDefault(); if (track()) toggle(); }
+  else if (k === 'arrowright') { if (duration()) el.currentTime = Math.min(duration() - .05, el.currentTime + 5); }
+  else if (k === 'arrowleft') { if (duration()) el.currentTime = Math.max(0, el.currentTime - 5); }
+  else if (k === 'arrowup') { e.preventDefault(); setVolume(cfg.vol + .05); }
+  else if (k === 'arrowdown') { e.preventDefault(); setVolume(cfg.vol - .05); }
+  else if (k === 'n') step(1);
+  else if (k === 'b') step(-1);
+  else if (k === 'o') pickFiles();
+  else if (k === 'p') panel.toggle(panel.el.hidden, true);
+  else if (k === 'escape') panel.toggle(false);
+  else if (k === 't') { const names = Object.keys(THEMES); applySettings({ theme: names[(names.indexOf(themeName) + 1) % names.length] }); }
+  else if (k === 'f') applySettings({ fx: !cfg.fx });
+});
+
+// ---------- loop ----------
+let last = performance.now(), lastDraw = 0, fps = 60, fpsFrames = 0, fpsT = last;
+function draw(now) {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  if (cv.width && cv.height) ctx.drawImage(bgLayer, 0, 0);
+  ctx.setTransform(dpr * s, 0, 0, dpr * s, dpr * ox, dpr * oy);
+  ctx.textBaseline = 'middle';
+  ctx.lineCap = 'butt'; ctx.lineJoin = 'round';
+  hitsNext = [];
+  header(now);
+  channel(0, now); channel(1, now);
+  deck(now);
+  playlist();
+  info();
+  lyrics(now);
+  if (live() && !el.paused) for (const [P, ph] of [[G.skin[0], 0], [G.skin[1], .3], [G.list, .5], [G.info, .7], [G.lyr, .2], [G.probe, .9]]) pulse(P, now, 170, ph);
+  txt('SPACE 播放 / 暂停   ·   ← → 快进 5 秒   ·   B / N 切歌   ·   ↑ ↓ 音量   ·   O 打开文件   ·   T 主题   ·   P 面板', 1840, 1070, `11px ${F.ui}`, C.dim, 'right', .7);
+  dropOverlay(now);
+  HITS = hitsNext;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  txt(`${fps.toFixed(0)} FPS`, W - 20, H - 18, `11px ${F.mono}`, C.dim, 'right', .6);
+}
+function frame(ts) {
+  requestAnimationFrame(frame);
+  if (fpsCap > 0 && ts - lastDraw < 1000 / fpsCap - .5) return;
+  lastDraw = ts;
+  const dt = Math.min(.1, Math.max(0, (ts - last) / 1000)); last = ts;
+  const now = ts / 1000;
+  analyse(dt);
+  draw(now);
+  if (window.hudFx && window.hudFx.on) window.hudFx.render(now);
+  fpsFrames++;
+  if (ts - fpsT >= 1000) { fps = fpsFrames * 1000 / (ts - fpsT); fpsFrames = 0; fpsT = ts; }
+}
+
+window.hudFx = params.get('fx') === '0' ? null : createFx();
+resize();
+window.hudReady = true;
+if (window.hudFx) window.hudFx.resize();
+applySettings({}, false);
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

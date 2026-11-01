@@ -5,6 +5,7 @@
 | 路径 | 内容 |
 | --- | --- |
 | `hud/index.html` | 整个 HUD：单文件 Canvas2D 绘制 + WebGL2 后处理 + WebAudio 合成音效 |
+| `hud/player.html` | 音乐播放器 HUD：同一套配色、字体与后处理的单文件页面，见下文「音乐播放器」（暂不进入发布流程） |
 | `hud/fonts/` | 本地打包的 OFL 字体，由 `tools/fetch-fonts.mjs` 生成 |
 | `helper/` | Rust 写的 `hud-telemetry.exe`：硬件遥测服务，以及不依赖 Wallpaper Engine 的独立壁纸（`--wallpaper`，把 `hud/` 编译进 exe），见 [helper/README.md](../helper/README.md) |
 | `wallpaper-engine/telemetry-hud/` | Wallpaper Engine 网页壁纸包：`project.json`（属性面板）、`preview.jpg`、包内 README；`index.html` 和 `fonts/` 由打包脚本复制 |
@@ -35,6 +36,21 @@ python -m http.server 5174 -d hud
 | `mute=1` | 本页面不出声，不影响保存的音量（独立壁纸的副屏和设置窗口用） |
 
 数据原则：正式模式下只显示 helper 实测到的值，读不到的一律显示 NO SIGNAL，不推测、不填充模拟数据。
+
+## 音乐播放器
+
+`hud/player.html` 是独立的音乐播放器页面，用同一个预览服务器打开：
+
+- `http://localhost:5174/player.html`：拖入音频文件或文件夹（或按 O / 点 LOAD FILES 选择），同名 `.lrc` 自动匹配
+- `http://localhost:5174/player.html?demo=1`：用 Web Audio 离线合成三首示例曲（写成带 INFO 标签的 WAV，走和本地文件相同的解析与播放流程）和内置示例歌词
+
+构图是侧视的飞翼：圆环在前缘（进度环、当前曲目、播放控制、音量，环外上半圈是左右声道频谱），上下蒙皮向右收拢到后缘，左声道示波器沿上蒙皮、右声道沿下蒙皮流出（背后是 6 秒 RMS 历史）；翼梁上挂歌词（时间戳 + 打字机效果，点击行可跳转），播放列表与文件规格从下蒙皮垂下。
+
+- 音频图：`<audio>` → `MediaElementSource` → 音量 → 输出；另一路先上混成立体声，再经 `ChannelSplitterNode` 进左右两个 `AnalyserNode`（接在音量之前，显示的是文件本身的信号）
+- 元数据：页面内的轻量解析器读取 ID3v1 / ID3v2（含 USLT）、FLAC 与 Ogg 的 Vorbis comment、MP4 `ilst`、RIFF INFO，以及 MP3 帧头 / Xing / VBRI、FLAC STREAMINFO、WAV `fmt`、MP4 `mvhd` 得到的采样率、声道与码率（VBR / 平均码率按实际音频字节算）。格式、大小、MIME 取浏览器给出的文件信息
+- 读不到的字段显示 NO SIGNAL；没有标题标签时依次退回 LRC 的 `[ti:]`、文件名，并在标题上方注明来源。歌词优先同名 `.lrc`，其次是文件内嵌、带时间戳的歌词
+- 快捷键：空格播放 / 暂停，← → 快进 5 秒，B / N 切歌，↑ ↓ 音量，O 打开文件，T 切换主题，F 开关后处理，P 控制面板
+- 参数：`theme=` `fx=0` `curve=` `glow=` `scan=` `fps=` `bottom=` 与遥测 HUD 相同；设置单独存在 `hud-player-settings-v1`，不影响遥测 HUD
 
 ## 打包壁纸
 
