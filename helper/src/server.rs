@@ -9,6 +9,9 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+/// 数据服务的默认端口；页面的默认 endpoint 也是它
+pub const DEFAULT_PORT: u16 = 27182;
+
 pub type Shared = Arc<Mutex<Arc<Vec<u8>>>>;
 
 struct Sampler {

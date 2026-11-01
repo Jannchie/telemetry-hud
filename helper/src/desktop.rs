@@ -28,7 +28,6 @@ use wry::{WebContext, WebView, WebViewBuilder, WebViewBuilderExtWindows};
 pub const CONTROL_CLASS: &str = "TelemetryHUDDesktop";
 const WALL_CLASS: &str = "TelemetryHUDWall";
 const SETTINGS_CLASS: &str = "TelemetryHUDSettings";
-const DEFAULT_PORT: u16 = 27182;
 const WM_TRAY: u32 = WM_APP + 1;
 const TIMER_TICK: usize = 1;
 const TIMER_MOUSE: usize = 2;
@@ -123,12 +122,18 @@ struct Monitor {
     primary: bool,
 }
 
+fn monitor_info(hmon: HMONITOR) -> Option<MONITORINFO> {
+    unsafe {
+        let mut mi: MONITORINFO = std::mem::zeroed();
+        mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+        (GetMonitorInfoW(hmon, &mut mi) != 0).then_some(mi)
+    }
+}
+
 fn monitors() -> Vec<Monitor> {
     unsafe extern "system" fn cb(hmon: HMONITOR, _: HDC, _: *mut RECT, lp: LPARAM) -> windows_sys::core::BOOL {
         let out = &mut *(lp as *mut Vec<Monitor>);
-        let mut mi: MONITORINFO = std::mem::zeroed();
-        mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
-        if GetMonitorInfoW(hmon, &mut mi) != 0 {
+        if let Some(mi) = monitor_info(hmon) {
             let (mut dx, mut dy) = (96, 96);
             GetDpiForMonitor(hmon, MDT_EFFECTIVE_DPI, &mut dx, &mut dy);
             out.push(Monitor { rect: rect(mi.rcMonitor), dpi: dx, primary: mi.dwFlags & MONITORINFOF_PRIMARY != 0 });
@@ -195,20 +200,16 @@ fn covered_monitors() -> Vec<Rect> {
         if ex & (WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW) != 0 {
             return 1;
         }
-        let mut cloaked = 0u32;
-        DwmGetWindowAttribute(h, DWMWA_CLOAKED as u32, &mut cloaked as *mut _ as _, 4);
-        if cloaked != 0 || matches!(class_of(h).as_str(), "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd") {
-            return 1;
-        }
-        let mut mi: MONITORINFO = std::mem::zeroed();
-        mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
-        if GetMonitorInfoW(MonitorFromWindow(h, MONITOR_DEFAULTTONEAREST), &mut mi) == 0 {
-            return 1;
-        }
+        let Some(mi) = monitor_info(MonitorFromWindow(h, MONITOR_DEFAULTTONEAREST)) else { return 1 };
         let (m, mut wr) = (mi.rcMonitor, std::mem::zeroed::<RECT>());
         GetWindowRect(h, &mut wr);
         let full = wr.left <= m.left && wr.top <= m.top && wr.right >= m.right && wr.bottom >= m.bottom;
-        if (full || IsZoomed(h) != 0) && !out.contains(&rect(m)) {
+        if !(full || IsZoomed(h) != 0) || out.contains(&rect(m)) {
+            return 1;
+        }
+        let mut cloaked = 0u32;
+        DwmGetWindowAttribute(h, DWMWA_CLOAKED as u32, &mut cloaked as *mut _ as _, 4);
+        if cloaked == 0 && !matches!(class_of(h).as_str(), "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd") {
             out.push(rect(m));
         }
         1
@@ -284,6 +285,8 @@ struct App {
     rebuild_at: Option<Instant>,
     first_build: bool,
     cursor: POINT,
+    /// 光标轮询定时器是否在跑；所有壁纸都暂停时关掉，省得每秒唤醒 30 次
+    mouse_timer: bool,
     tray: NOTIFYICONDATAW,
 }
 
@@ -403,6 +406,17 @@ impl App {
                 w.paused = Some(p);
             }
         }
+        let want = self.walls.iter().any(|w| w.paused == Some(false));
+        if want != self.mouse_timer {
+            self.mouse_timer = want;
+            unsafe {
+                if want {
+                    SetTimer(self.control, TIMER_MOUSE, 33, None);
+                } else {
+                    KillTimer(self.control, TIMER_MOUSE);
+                }
+            }
+        }
     }
 
     fn mouse(&mut self) {
@@ -501,13 +515,6 @@ impl App {
 
     fn set_paused(&mut self, on: bool) {
         self.user_paused = on;
-        unsafe {
-            if on {
-                KillTimer(self.control, TIMER_MOUSE);
-            } else {
-                SetTimer(self.control, TIMER_MOUSE, 33, None);
-            }
-        }
         self.tick();
     }
 
@@ -540,7 +547,7 @@ fn register(hinst: HINSTANCE, name: &str, proc_: WNDPROC, icon: HICON, bg: HBRUS
     unsafe { RegisterClassExW(&wc) };
 }
 
-pub fn run(lhm_port: u16) {
+pub fn run(port: u16, lhm_port: u16) {
     unsafe {
         // 单实例
         let _mutex = CreateMutexW(std::ptr::null(), 0, wide(r"Local\TelemetryHUD-Desktop").as_ptr());
@@ -551,8 +558,7 @@ pub fn run(lhm_port: u16) {
         CoInitializeEx(std::ptr::null(), COINIT_APARTMENTTHREADED as u32);
     }
 
-    // 默认端口被占用（例如还有一个 --background 实例）就换空闲端口，并通过 ?endpoint= 告诉页面
-    let port = std::env::var("HUD_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(DEFAULT_PORT);
+    // 端口被占用（例如还有一个 --background 实例）就换空闲端口；实际端口始终通过 ?endpoint= 告诉页面
     let listener = match TcpListener::bind(("127.0.0.1", port)).or_else(|_| TcpListener::bind(("127.0.0.1", 0))) {
         Ok(l) => l,
         Err(_) => return,
@@ -561,7 +567,7 @@ pub fn run(lhm_port: u16) {
     let snap = server::spawn_sampler(lhm_port);
     std::thread::spawn(move || server::serve(listener, snap));
 
-    let data_dir: Option<PathBuf> = install::Ctx::new().ok().map(|c| c.dir.join("webview"));
+    let data_dir: Option<PathBuf> = install::Ctx::new().ok().map(|c| c.webview_dir());
     let hinst = unsafe { GetModuleHandleW(std::ptr::null()) };
     let icon_big = make_icon(unsafe { GetSystemMetrics(SM_CXICON) });
     let icon_small = make_icon(unsafe { GetSystemMetrics(SM_CXSMICON) });
@@ -609,7 +615,7 @@ pub fn run(lhm_port: u16) {
         ctx: WebContext::new(data_dir),
         // HUD_QUERY：额外的网址参数（如 theme=glacier&fps=30），开发调试用
         query: [
-            if port == DEFAULT_PORT { String::new() } else { format!("endpoint=http://127.0.0.1:{port}/stats") },
+            format!("endpoint=http://127.0.0.1:{port}/stats"),
             std::env::var("HUD_QUERY").unwrap_or_default(),
         ]
         .join("&"),
@@ -620,13 +626,13 @@ pub fn run(lhm_port: u16) {
         rebuild_at: None,
         first_build: true,
         cursor: POINT { x: i32::MIN, y: i32::MIN },
+        mouse_timer: false,
         tray,
     };
     app.add_tray();
     app.rebuild();
     unsafe {
         SetTimer(control, TIMER_TICK, 1000, None);
-        SetTimer(control, TIMER_MOUSE, 33, None);
     }
 
     let mut quit = false;

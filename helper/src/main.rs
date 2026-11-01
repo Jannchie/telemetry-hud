@@ -42,7 +42,7 @@ fn main() {
         attach_console();
     }
 
-    let mut port = std::env::var("HUD_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(27182u16);
+    let mut port = std::env::var("HUD_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(server::DEFAULT_PORT);
     let mut lhm_port = 8085u16;
     for w in args.windows(2) {
         match w[0].as_str() {
@@ -84,9 +84,9 @@ fn main() {
         println!("smbios={t_smbios:?} pci_scan={t_scan:?}");
         return;
     }
-    // 独立壁纸：嵌到桌面图标后面，自带数据服务（端口取 HUD_PORT，默认 27182）
+    // 独立壁纸：嵌到桌面图标后面，自带数据服务
     if has("--wallpaper") {
-        desktop::run(lhm_port);
+        desktop::run(port, lhm_port);
         return;
     }
     // 以下是服务模式（--background，或带 --port / --lhm-port 等参数）

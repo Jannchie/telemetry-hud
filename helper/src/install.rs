@@ -76,6 +76,11 @@ impl Ctx {
     }
 
     /// Run 值存在且指向安装路径，且安装文件还在
+    /// 独立壁纸的 WebView2 数据目录（含控制面板设置），卸载时一起删除
+    pub fn webview_dir(&self) -> PathBuf {
+        self.dir.join("webview")
+    }
+
     pub fn is_installed(&self) -> bool {
         let target = self.exe.to_string_lossy().to_lowercase();
         self.run_value().is_some_and(|v| v.to_lowercase().contains(&target)) && self.exe.exists()
@@ -149,7 +154,7 @@ impl Ctx {
         }
         let me = std::env::current_exe().map_err(|e| e.to_string())?;
         // 独立壁纸的 WebView2 数据（含控制面板设置）一起删掉；WebView2 子进程可能还要一会儿才退出
-        let webview = self.dir.join("webview");
+        let webview = self.webview_dir();
         if same_path(&me, &self.exe) {
             // 正在运行的就是安装文件本身：交给 cmd 延迟 2 秒后删除（目录非空时 rmdir 会失败，保留其他数据）
             let cmd = format!(
@@ -288,9 +293,10 @@ pub fn interactive() {
     // 已安装：先问是重装 / 切换运行方式、卸载，还是保持现状。双击新下载的版本走“重装”就是升级，
     // 所以这里不能只问卸载，否则从只装数据服务的旧版升级时永远选不到独立壁纸
     if ctx.is_installed() {
-        let current = match ctx.installed_mode() {
-            Some(Mode::Wallpaper) => tr("standalone wallpaper", "独立壁纸", "単体の壁紙"),
-            _ => tr("hardware helper only", "仅硬件数据服务", "ハードウェアヘルパーのみ"),
+        let installed = ctx.installed_mode().unwrap_or(Mode::Helper);
+        let current = match installed {
+            Mode::Wallpaper => tr("standalone wallpaper", "独立壁纸", "単体の壁紙"),
+            Mode::Helper => tr("hardware helper only", "仅硬件数据服务", "ハードウェアヘルパーのみ"),
         };
         let r = msg(
             &tr(
@@ -310,7 +316,7 @@ pub fn interactive() {
         }
         if r != IDYES {
             if !ctx.is_running() {
-                if let Err(e) = ctx.start(ctx.installed_mode().unwrap_or(Mode::Helper)) {
+                if let Err(e) = ctx.start(installed) {
                     msg(&e, MB_OK | MB_ICONERROR);
                 }
             }
@@ -330,22 +336,26 @@ pub fn interactive() {
         _ => return,
     };
     match ctx.install(mode) {
-        Ok(()) => msg(
-            &match mode {
+        Ok(()) => {
+            let head = match mode {
                 Mode::Helper => tr(
-                    "Telemetry HUD is installed, set to start when you sign in, and now running in the background.\n\nLocation: {p}\n\nYou can delete the downloaded file now.\nTo uninstall, double-click this program again.",
-                    "Telemetry HUD 已安装并设为开机自启，服务已在后台运行。\n\n安装位置：{p}\n\n现在可以删除下载的文件了。\n想卸载的话，再双击一次这个程序即可。",
-                    "Telemetry HUD をインストールし、サインイン時に自動起動するよう設定しました。サービスはバックグラウンドで動作中です。\n\nインストール先：{p}\n\nダウンロードしたファイルは削除して構いません。\nアンインストールするには、このプログラムをもう一度ダブルクリックしてください。",
+                    "Telemetry HUD is installed, set to start when you sign in, and now running in the background.",
+                    "Telemetry HUD 已安装并设为开机自启，服务已在后台运行。",
+                    "Telemetry HUD をインストールし、サインイン時に自動起動するよう設定しました。サービスはバックグラウンドで動作中です。",
                 ),
                 Mode::Wallpaper => tr(
-                    "Telemetry HUD is installed as your desktop wallpaper and set to start when you sign in.\n\nRight-click its tray icon to open the settings, pause it or exit.\n\nLocation: {p}\n\nYou can delete the downloaded file now.\nTo uninstall, double-click this program again.",
-                    "Telemetry HUD 已作为桌面壁纸安装，并设为开机自启。\n\n右键托盘图标可以打开设置、暂停或退出。\n\n安装位置：{p}\n\n现在可以删除下载的文件了。\n想卸载的话，再双击一次这个程序即可。",
-                    "Telemetry HUD をデスクトップの壁紙としてインストールし、サインイン時に自動起動するよう設定しました。\n\nタスクトレイのアイコンを右クリックすると、設定・一時停止・終了ができます。\n\nインストール先：{p}\n\nダウンロードしたファイルは削除して構いません。\nアンインストールするには、このプログラムをもう一度ダブルクリックしてください。",
+                    "Telemetry HUD is installed as your desktop wallpaper and set to start when you sign in.\n\nRight-click its tray icon to open the settings, pause it or exit.",
+                    "Telemetry HUD 已作为桌面壁纸安装，并设为开机自启。\n\n右键托盘图标可以打开设置、暂停或退出。",
+                    "Telemetry HUD をデスクトップの壁紙としてインストールし、サインイン時に自動起動するよう設定しました。\n\nタスクトレイのアイコンを右クリックすると、設定・一時停止・終了ができます。",
                 ),
-            }
-            .replace("{p}", &ctx.exe.display().to_string()),
-            MB_OK | MB_ICONINFORMATION,
-        ),
+            };
+            let tail = tr(
+                "Location: {p}\n\nYou can delete the downloaded file now.\nTo uninstall, double-click this program again.",
+                "安装位置：{p}\n\n现在可以删除下载的文件了。\n想卸载的话，再双击一次这个程序即可。",
+                "インストール先：{p}\n\nダウンロードしたファイルは削除して構いません。\nアンインストールするには、このプログラムをもう一度ダブルクリックしてください。",
+            );
+            msg(&format!("{head}\n\n{}", tail.replace("{p}", &ctx.exe.display().to_string())), MB_OK | MB_ICONINFORMATION)
+        }
         Err(e) => msg(&tr("Install failed: {e}", "安装失败：{e}", "インストールに失敗しました：{e}").replace("{e}", &e), MB_OK | MB_ICONERROR),
     };
 }
