@@ -9,6 +9,7 @@
 | `helper/` | Rust 写的 `hud-telemetry.exe`：硬件遥测服务，以及不依赖 Wallpaper Engine 的独立壁纸（`--wallpaper`，把 `hud/` 编译进 exe），见 [helper/README.md](../helper/README.md) |
 | `wallpaper-engine/telemetry-hud/` | Wallpaper Engine 网页壁纸包：`project.json`（属性面板）、`preview.jpg`、包内 README；`index.html` 和 `fonts/` 由打包脚本复制 |
 | `tools/` | 开发脚本：字体下载、壁纸打包、演示视频导出 |
+| `docs/DESIGN.md` | 设计语言：构图、线条、配色、字体、组件、动效、视差、后处理与音效的约定 |
 
 ## 本地预览
 
@@ -25,6 +26,7 @@ python -m http.server 5174 -d hud
 | `intro=0` | 跳过开屏动画 |
 | `endpoint=` | helper 地址，默认 `http://127.0.0.1:27182/stats` |
 | `theme=` | `ember` / `glacier` / `phosphor` / `classic` / `amber` / `synthwave` / `sakura` / `cobalt` / `mono` |
+| `hot=` `cool=` `mark=` `alt=` `heat=` | 覆盖强调色，六位十六进制、不带 `#`，如 `hot=33ff99` |
 | `fx=0` | 关闭后处理 |
 | `curve=` `glow=` `scan=` `sfx=` | 后处理强度与音量（0–1.5） |
 | `parallax=` | 鼠标视差强度（0–1，0 关闭，默认 0.5） |
@@ -70,7 +72,7 @@ git push origin main v0.1.2
 node tools/export-video.mjs 64 video/telemetry-hud-demo.mp4
 ```
 
-需要 Microsoft Edge、PATH 里的 ffmpeg，以及正在运行的本地预览服务器。脚本用无头 Edge 接管页面时钟，逐帧截图，并用页面自己的合成器离线渲染音轨，最后合成 1080p60 带音效的 mp4。
+需要 Microsoft Edge、PATH 里的 ffmpeg，以及正在运行的本地预览服务器。脚本用无头 Edge 接管页面时钟，逐帧截图，并用页面自己的合成器离线渲染音轨，最后合成带音效的 60fps mp4。默认按 2 倍像素比输出 3840×2160，`HUD_SCALE=1` 输出 1080p。
 
 ## 字体
 
