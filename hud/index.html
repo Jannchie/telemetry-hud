@@ -284,7 +284,7 @@ window.wallpaperPropertyListener = {
   applyUserProperties(p) {
     const patch = {};
     if (p.theme) patch.theme = p.theme.value;
-    for (const k of ['glow', 'scan', 'curve', 'parallax', 'sfx']) if (p[k]) patch[k] = +p[k].value;
+    for (const k of NUM_KEYS) if (p[k]) patch[k] = +p[k].value;
     if (p.hum) patch.hum = !!p.hum.value;
     if (p.fx) patch.fx = !!p.fx.value;
     applySettings(patch);
@@ -404,15 +404,21 @@ const gens = {
 const cv = document.getElementById('c');
 const ctx = cv.getContext('2d', { alpha: false });
 const bgLayer = document.createElement('canvas');
-let W, H, dpr, s, ox, oy, EL, ER, ET, EB;
+// 视差强度为 1 时：近层的最大平移、骨架深度场中心与边缘各自的最大平移（设计像素），以及整体最大转角；
+// 背景点阵按 BG_DEPTH 的比例和鼠标同向移动。resize() 要用它们算背景层的边距，所以定义在这里
+const PAR_PX = 20, PAR_FIELD = 16, PAR_DEG = 3, BG_DEPTH = .4;
+// BG_M：背景层四周多画出的边距（设备像素），够背景点阵的最大视差偏移
+let W, H, dpr, s, ox, oy, EL, ER, ET, EB, BG_M;
 
 function resize() {
   dpr = Math.min(window.devicePixelRatio || 1, 2);
   W = innerWidth; H = innerHeight;
-  cv.width = bgLayer.width = Math.round(W * dpr);
-  cv.height = bgLayer.height = Math.round(H * dpr);
+  cv.width = Math.round(W * dpr);
+  cv.height = Math.round(H * dpr);
   // 底部预留 BOTTOM 个设计像素（给任务栏等），整体按 1080 + BOTTOM 的高度适配，内容靠上
   s = Math.min(W / 1920, H / (1080 + BOTTOM));
+  BG_M = Math.ceil(PAR_PX * BG_DEPTH * dpr * s) + 1;
+  bgLayer.width = cv.width + 2 * BG_M; bgLayer.height = cv.height + 2 * BG_M;
   ox = (W - 1920 * s) / 2; oy = (H - (1080 + BOTTOM) * s) / 2;
   EL = -ox / s; ER = 1920 + ox / s; ET = -oy / s; EB = (H - oy) / s;
   // 静态背景层：暗角 + 点阵，只在尺寸变化时重绘
@@ -420,10 +426,11 @@ function resize() {
   const g = b.createRadialGradient(bgLayer.width / 2, bgLayer.height * .5, 0, bgLayer.width / 2, bgLayer.height * .5, Math.max(bgLayer.width, bgLayer.height) * .7);
   g.addColorStop(0, C.bg0); g.addColorStop(1, C.bg1);
   b.fillStyle = g; b.fillRect(0, 0, bgLayer.width, bgLayer.height);
-  b.setTransform(dpr * s, 0, 0, dpr * s, dpr * ox, dpr * oy);
+  b.setTransform(dpr * s, 0, 0, dpr * s, dpr * ox + BG_M, dpr * oy + BG_M);
   b.fillStyle = alpha(C.fg, .045);
-  for (let x = Math.ceil(EL / 48) * 48; x < ER; x += 48)
-    for (let y = Math.ceil(ET / 48) * 48; y < EB; y += 48) b.fillRect(x - .75, y - .75, 1.5, 1.5);
+  const m = BG_M / (dpr * s);
+  for (let x = Math.ceil((EL - m) / 48) * 48; x < ER + m; x += 48)
+    for (let y = Math.ceil((ET - m) / 48) * 48; y < EB + m; y += 48) b.fillRect(x - .75, y - .75, 1.5, 1.5);
   build();
   if (window.hudFx) window.hudFx.resize();
 }
@@ -521,7 +528,9 @@ function build() {
   // 翼线固定画到 x=60，超宽屏多出的部分由 extend() 用直线补齐，保证分段比例不随屏幕变化
   const A = poly([P(800, 540), P(770, 540), P(590, 330), P(420, 300), P(60, 300)], 18);
   const B = poly([P(800, 540), P(770, 540), P(600, 730), P(440, 770), P(60, 770)], 18);
-  const Hz = poly([P(780, 540), P(650, 540), P(634, 556), P(60, 556)], 6);
+  // HSTEP：地平线下折的台阶底部，时间轴到这里为止
+  const HSTEP = P(634, 556);
+  const Hz = poly([P(780, 540), P(650, 540), HSTEP, P(60, 556)], 6);
   // 上缘斜边角度与下方支腿一致（dx:dy = 30:46），支腿就是这条斜边越过尖端后的延长
   // 两端从左右翼的水平短线以过渡弧拐入斜边；斜边本身越过尖端继续向下就是支腿，形成“道岔”
   const lensT = poly([P(786, 540), tip, P(850, 494), P(1070, 494), M(tip), P(1134, 540)], [17, 36, 36, 17]);
@@ -530,6 +539,7 @@ function build() {
   G.A = [new Path(A).outer({ x: 300, y: 900 }), new Path(MS(A)).outer({ x: 1620, y: 900 })];
   G.B = [new Path(B).outer({ x: 300, y: 200 }), new Path(MS(B)).outer({ x: 1620, y: 200 })];
   G.H = [new Path(Hz).outer({ x: 400, y: 2000 }), new Path(MS(Hz)).outer({ x: 1520, y: 2000 })];
+  G.Hstep = G.H.map((P, k) => uAtX(P, (k ? M(HSTEP) : HSTEP).x));
   G.lensT = new Path(lensT).outer({ x: 960, y: 540 });
 
   // 冠线：从中轴分出，落在 A 的节点上
@@ -587,12 +597,16 @@ function stroke(P, ua, ub, color, w, off = 0) {
   ctx.strokeStyle = color; ctx.lineWidth = w; ctx.beginPath(); P.trace(ua, ub, off); ctx.stroke();
 }
 // 在路径某点按切线方向放置内容，自动翻转保证文字朝上；fn 收到外侧法线在局部坐标中的 y 方向
+// fn 里的坐标系带旋转，depth() 要按完整变换换算视差偏移
+let ROT = 0;
 function onPath(P, u, off, fn) {
   const q = P.at(u);
   let a = q.a;
   if (Math.cos(a) < 0) a += Math.PI;
   const ly = -Math.sin(a) * q.nx + Math.cos(a) * q.ny;
-  ctx.save(); ctx.translate(q.x + q.nx * off, q.y + q.ny * off); ctx.rotate(a); fn(ly < 0 ? -1 : 1); ctx.restore();
+  ctx.save(); ctx.translate(q.x + q.nx * off, q.y + q.ny * off); ctx.rotate(a);
+  ROT++; fn(ly < 0 ? -1 : 1); ROT--;
+  ctx.restore();
 }
 // 沿路径的分段格子条：贴在线的一侧（off>0 外侧，off<0 内侧），格子为斜切平行四边形，按格量化填充
 // h 可以是数字，或 [起点高度, 终点高度] 表示由细到粗；斜切角度固定，所以不同高度的格子短边仍然互相平行
@@ -799,9 +813,11 @@ function wingA(k, now) {
 // 电量低于 20% 且未充电时闪烁。没有电池（台式机）时什么都不画
 const CR0 = .02, CR1 = .955;
 const batColor = (pct) => pct > 50 ? C.cool : pct > 20 ? C.mark : C.hot;
+// 有电量读数的电池；台式机等没有电池时为 null
+const battery = () => { const b = D.power && D.power.battery; return b && b.percent != null ? b : null; };
 function crownBattery(P, now) {
-  const bat = D.power && D.power.battery;
-  if (!bat || bat.percent == null) return;
+  const bat = battery();
+  if (!bat) return;
   const ua = CR1 - (CR1 - CR0) * clamp01(bat.percent / 100), col = batColor(bat.percent);
   ctx.globalAlpha = bat.percent <= 20 && !bat.charging ? flicker(now) : 1;
   stroke(P, ua, CR1, col, 2.5);
@@ -1097,7 +1113,7 @@ function timeTrack(P, k) {
     sub = `YEAR ${floorPct(f, 4)}% · D${Math.floor((d - a) / 864e5) + 1}`;
   }
   // 时间轴只占台阶外侧的水平段：终点落在地平线下折的台阶处（x = 634），不延伸到通往中心的短线
-  const u0 = uAtX(P, k ? 1920 - 634 : 634), uOf = (x) => u0 + (1 - u0) * (1 - x);
+  const u0 = G.Hstep[k], uOf = (x) => u0 + (1 - u0) * (1 - x);
   const at = (x) => P.at(uOf(x));
   // 已过去的部分
   ctx.globalAlpha = .6; stroke(P, uOf(f), 1, C.fg, 1.5); ctx.globalAlpha = 1;
@@ -1322,11 +1338,9 @@ function specBlock(k) {
   else glitchText(`${k ? 'GPU' : 'CPU'} · NO SIGNAL`, inner, y0 - 30, `600 13px ${F.ui}`, ia);
   seg(outer, y0 - 15, hang, y0 - 15, C.line, 1);
   ctx.textBaseline = 'alphabetic';
-  rows.forEach(([key, val], i) => {
-    const y = y0 + i * rowH + 4;
-    depth(Z2, () => txt(key, outer, y, `600 9px ${F.ui}`, C.dim, oa, 1, 2));
-    depth(Z1, () => txt(val, inner, y, `11px ${F.mono}`, C.fg, ia, .85));
-  });
+  const rowY = (i) => y0 + i * rowH + 4;
+  depth(Z2, () => rows.forEach(([key], i) => txt(key, outer, rowY(i), `600 9px ${F.ui}`, C.dim, oa, 1, 2)));
+  depth(Z1, () => rows.forEach(([, val], i) => txt(val, inner, rowY(i), `11px ${F.mono}`, C.fg, ia, .85)));
   ctx.textBaseline = 'middle';
   // 表格在视差近层，挂线下端钉回冠线
   seg(hang, y0 - 15, ...pin(hang, 276), C.line, 1);
@@ -1491,7 +1505,7 @@ function memPanel() {
       // （文字仍从左往右读，落点在标题线右端）
       const left = x < 960, ang = Math.atan2(46, 30);
       ctx.save(); ctx.translate(x, top); ctx.rotate(left ? -ang : ang);
-      dimm(left ? -150 : 0, 0, 150, mod);
+      ROT++; dimm(left ? -150 : 0, 0, 150, mod); ROT--;
       ctx.restore();
     });
   });
@@ -1539,8 +1553,8 @@ function loadChart(x0, y0, w, h, buf, mirror) {
 }
 function cells() {
   // 电池读数：冠线中心圆环下方，中轴两侧对称——左边电量，右边充电状态 / 剩余时间
-  const bat = D.power && D.power.battery;
-  if (bat && bat.percent != null) {
+  const bat = battery();
+  if (bat) {
     txt(`${bat.percent.toFixed(0)}%`, 950, 302, `12px ${F.mono}`, batColor(bat.percent), 'right');
     const rm = bat.remainingMin;
     const st = bat.charging ? 'CHG' : D.power.ac ? (bat.percent >= 99 ? 'FULL' : 'AC') : rm == null ? 'BAT' : rm < 60 ? `${rm}m` : `${Math.floor(rm / 60)}h${pad2(rm % 60)}`;
@@ -1585,7 +1599,8 @@ function cells() {
   } else {
     txt(`${(u / 1000).toFixed(2)} / ${(tt / 1000).toFixed(1)} TB`, 934, 672, `16px ${F.mono}`, C.fg, 'right');
     depth(Z2, () => {
-      if (ALERTS.disk.on && busiestDisk()) txt(`${busiestDisk().n} ${busiestDisk().busy.toFixed(0)}% busy`, 934, 694, `10px ${F.ui}`, C.fg, 'right', flicker(performance.now() / 1000 + 4), 1);
+      const bd = ALERTS.disk.on && busiestDisk();
+    if (bd) txt(`${bd.n} ${bd.busy.toFixed(0)}% busy`, 934, 694, `10px ${F.ui}`, C.fg, 'right', flicker(performance.now() / 1000 + 4), 1);
       else txt(`${pct(u / tt)} allocated`, 934, 694, `10px ${F.ui}`, C.dim, 'right', 1, 1);
     });
   }
@@ -1854,12 +1869,15 @@ const SETTINGS_KEY = 'hud-settings-v1';
 const MUTE = params.get('mute') === '1';
 // 默认限 60 FPS：高分屏上满刷新率重绘 + 后处理开销很大，60 帧观感差别不大
 const DEFAULTS = { theme: 'ember', fx: true, curve: .5, glow: 0, scan: .4, parallax: .5, sfx: .35, hum: true, fps: 60 };
-const cfg = { ...DEFAULTS };
-try { Object.assign(cfg, JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}')); } catch {}
-for (const k of ['curve', 'glow', 'scan', 'parallax', 'sfx', 'fps']) if (params.get(k) != null) cfg[k] = +params.get(k);
-if (params.get('theme')) cfg.theme = params.get('theme');
-if (params.get('fx') === '0') cfg.fx = false;
-if (params.get('hum') === '0') cfg.hum = false;
+const NUM_KEYS = Object.keys(DEFAULTS).filter(k => typeof DEFAULTS[k] === 'number');
+// 网址参数优先级最高：载入时和其他窗口改了设置时都叠在最上面
+const URL_CFG = {};
+for (const k of NUM_KEYS) if (params.get(k) != null) URL_CFG[k] = +params.get(k);
+if (params.get('theme')) URL_CFG.theme = params.get('theme');
+if (params.get('fx') === '0') URL_CFG.fx = false;
+if (params.get('hum') === '0') URL_CFG.hum = false;
+const resolveCfg = (stored) => ({ ...DEFAULTS, ...stored, ...URL_CFG });
+const cfg = resolveCfg((() => { try { return JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}'); } catch { return {}; } })());
 
 const panel = (() => {
   const sliders = [
@@ -1960,7 +1978,7 @@ applySettings({}, false);
 // 同一份 localStorage 的其他页面改了设置（独立壁纸的设置窗口 → 各显示器上的壁纸），跟着生效但不再回写
 addEventListener('storage', (e) => {
   if (e.key !== SETTINGS_KEY) return;
-  try { applySettings({ ...DEFAULTS, ...JSON.parse(e.newValue || '{}') }, false); } catch {}
+  try { applySettings(resolveCfg(JSON.parse(e.newValue || '{}')), false); } catch {}
 });
 
 // ---------- 开屏：组件依次载入 ----------
@@ -2210,19 +2228,13 @@ function update(dt, now) {
 // 相机朝鼠标方向绕中心转动：近层（读数）反向平移，远层（背景点阵）同向平移，骨架层不动保持像素对齐；
 // 整体透视转角在后处理里做。鼠标 3 秒不动或离开窗口时缓慢回正。强度 cfg.parallax（0 关闭）。
 const PAR = { mx: 0, my: 0, last: -1e9, cx: 0, cy: 0, x: 0, y: 0 };
-// 强度为 1 时：近层的最大平移、骨架深度场中心与边缘各自的最大平移（设计像素），以及整体最大转角
-const PAR_PX = 20, PAR_FIELD = 16, PAR_DEG = 3;
-addEventListener('mousemove', (e) => {
-  PAR.mx = Math.max(-1, Math.min(1, e.clientX / W * 2 - 1));
-  PAR.my = Math.max(-1, Math.min(1, e.clientY / H * 2 - 1));
-  PAR.last = performance.now() / 1000;
-});
-document.documentElement.addEventListener('mouseleave', () => { PAR.last = -1e9; });
-// 独立壁纸嵌在桌面图标后面收不到鼠标事件，由宿主轮询光标后调用；nx / ny 为窗口内的归一化坐标（-1..1，可超出）
+// nx / ny 为窗口内的归一化坐标（-1..1，可超出）。独立壁纸嵌在桌面图标后面收不到鼠标事件，由宿主轮询光标后调用
 window.hudPointer = (nx, ny) => {
   PAR.mx = Math.max(-1, Math.min(1, nx)); PAR.my = Math.max(-1, Math.min(1, ny));
   PAR.last = performance.now() / 1000;
 };
+addEventListener('mousemove', (e) => hudPointer(e.clientX / W * 2 - 1, e.clientY / H * 2 - 1));
+document.documentElement.addEventListener('mouseleave', () => { PAR.last = -1e9; });
 function parallaxStep(dt, now) {
   const idle = now - PAR.last > 3, k = 1 - Math.exp(-dt * (idle ? 1.2 : 4));
   PAR.cx += ((idle ? 0 : PAR.mx) - PAR.cx) * k;
@@ -2239,13 +2251,20 @@ const pin = (x, y) => [x - LAYER.x, y - LAYER.y];
 const Z1 = -.12, Z2 = -.25;
 function depth(z, fn) {
   if (!z || (!PAR.x && !PAR.y)) { fn(); return; }
+  // 大多数调用处只有缩放 + 平移，局部偏移就是设计像素；只有沿路径旋转过的坐标系（ROT > 0）才需要按完整变换换算
+  if (!ROT) {
+    const dx = -z * PAR.x, dy = -z * PAR.y;
+    ctx.translate(dx, dy); fn(); ctx.translate(-dx, -dy);
+    return;
+  }
   const m = ctx.getTransform(), k = -z * dpr * s, dx = PAR.x * k, dy = PAR.y * k, det = m.a * m.d - m.b * m.c;
   ctx.save(); ctx.translate((m.d * dx - m.c * dy) / det, (m.a * dy - m.b * dx) / det);
   fn();
   ctx.restore();
 }
-function layer(z, fn) {
-  const x = -PAR.x * z, y = -PAR.y * z;
+// 近层（读数格、规格表）：逆着鼠标平移一个完整的视差量
+function nearLayer(fn) {
+  const x = -PAR.x, y = -PAR.y;
   if (!x && !y) { fn(); return; }
   ctx.save(); ctx.translate(x, y); LAYER.x = x; LAYER.y = y;
   fn();
@@ -2255,11 +2274,10 @@ function layer(z, fn) {
 function draw(t, now) {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   // 窗口尺寸为 0 时（最小化、隐藏）背景层也是 0 尺寸，drawImage 会抛错
-  if (bgLayer.width && bgLayer.height) {
-    // 背景点阵是远层，和鼠标同向移动；露出的边缘用暗角的边缘色补上
-    const bx = PAR.x * .4 * dpr * s, by = PAR.y * .4 * dpr * s;
-    if (bx || by) { ctx.fillStyle = C.bg1; ctx.fillRect(0, 0, cv.width, cv.height); }
-    ctx.drawImage(bgLayer, bx, by);
+  if (cv.width && cv.height) {
+    // 背景点阵是远层，和鼠标同向移动；按整像素偏移，图像直接拷贝不重采样
+    const k = BG_DEPTH * dpr * s;
+    ctx.drawImage(bgLayer, Math.round(PAR.x * k) - BG_M, Math.round(PAR.y * k) - BG_M);
   }
   ctx.setTransform(dpr * s, 0, 0, dpr * s, dpr * ox, dpr * oy);
   ctx.textBaseline = 'middle';
@@ -2283,8 +2301,10 @@ function draw(t, now) {
   }
   staged('keel', now, keel);
   staged('core', now, () => core(t, now));
-  layer(1, () => staged('spec', now, () => { specBlock(0); specBlock(1); }));
-  layer(1, () => staged('cells', now, cells));
+  nearLayer(() => {
+    staged('spec', now, () => { specBlock(0); specBlock(1); });
+    staged('cells', now, cells);
+  });
   staged('mem', now, memPanel);
 
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
