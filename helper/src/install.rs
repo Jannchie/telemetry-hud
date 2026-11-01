@@ -128,6 +128,9 @@ impl Ctx {
         if !same_path(&me, &self.exe) {
             retry(|| std::fs::copy(&me, &self.exe).map(|_| ())).map_err(|e| tr("Copy failed: {e}", "复制失败：{e}", "コピーに失敗しました：{e}").replace("{e}", &e.to_string()))?;
         }
+        // CopyFile 会连同下载时浏览器写上的“来自网络”标记（Zone.Identifier 数据流）一起复制，
+        // 带着它的未签名程序每次开机自启都会弹“打开文件 - 安全警告”。用户已经确认运行过安装程序，安装副本去掉这个标记
+        let _ = std::fs::remove_file(format!("{}:Zone.Identifier", self.exe.display()));
         let cmd = wide(&format!("\"{}\" {}", self.exe.display(), mode.arg()));
         let r = unsafe {
             RegSetKeyValueW(HKEY_CURRENT_USER, wide(&self.run_key).as_ptr(), wide(VALUE).as_ptr(), REG_SZ, cmd.as_ptr() as _, (cmd.len() * 2) as u32)
