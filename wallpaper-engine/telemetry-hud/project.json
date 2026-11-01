@@ -32,16 +32,63 @@
 					{ "label" : "Mono", "value" : "mono" }
 				]
 			},
-			"fx" :
+			"customcolors" :
 			{
 				"order" : 2,
+				"text" : "Custom accent colors",
+				"type" : "bool",
+				"value" : false
+			},
+			"colorhot" :
+			{
+				"order" : 3,
+				"text" : "Primary (load)",
+				"type" : "color",
+				"value" : "1 0.42 0.173",
+				"condition" : "customcolors.value == true"
+			},
+			"colorcool" :
+			{
+				"order" : 4,
+				"text" : "Secondary (traffic)",
+				"type" : "color",
+				"value" : "0.561 0.827 0.839",
+				"condition" : "customcolors.value == true"
+			},
+			"colormark" :
+			{
+				"order" : 5,
+				"text" : "Marker",
+				"type" : "color",
+				"value" : "0.843 0.941 0.29",
+				"condition" : "customcolors.value == true"
+			},
+			"coloralt" :
+			{
+				"order" : 6,
+				"text" : "Memory alert",
+				"type" : "color",
+				"value" : "0.78 0.49 1",
+				"condition" : "customcolors.value == true"
+			},
+			"colorheat" :
+			{
+				"order" : 7,
+				"text" : "Heat alert",
+				"type" : "color",
+				"value" : "1 0.176 0.435",
+				"condition" : "customcolors.value == true"
+			},
+			"fx" :
+			{
+				"order" : 8,
 				"text" : "Post-processing (glow / scanlines / curvature)",
 				"type" : "bool",
 				"value" : true
 			},
 			"curve" :
 			{
-				"order" : 3,
+				"order" : 9,
 				"text" : "Curvature",
 				"type" : "slider",
 				"value" : 0.5,
@@ -54,7 +101,7 @@
 			},
 			"glow" :
 			{
-				"order" : 4,
+				"order" : 10,
 				"text" : "Glow",
 				"type" : "slider",
 				"value" : 0,
@@ -67,7 +114,7 @@
 			},
 			"scan" :
 			{
-				"order" : 5,
+				"order" : 11,
 				"text" : "Scanlines",
 				"type" : "slider",
 				"value" : 0.4,
@@ -80,7 +127,7 @@
 			},
 			"parallax" :
 			{
-				"order" : 6,
+				"order" : 12,
 				"text" : "Mouse parallax",
 				"type" : "slider",
 				"value" : 0.5,
@@ -92,7 +139,7 @@
 			},
 			"sfx" :
 			{
-				"order" : 7,
+				"order" : 13,
 				"text" : "Sound volume",
 				"type" : "slider",
 				"value" : 0.35,
@@ -104,7 +151,7 @@
 			},
 			"hum" :
 			{
-				"order" : 8,
+				"order" : 14,
 				"text" : "Ambient hum",
 				"type" : "bool",
 				"value" : true

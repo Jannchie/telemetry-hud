@@ -15,7 +15,7 @@ A cyberpunk system-monitor wallpaper. It runs on its own behind your desktop ico
 - **Power**: AC or battery, power plan, CPU package power and system power, when the hardware exposes them.
 - **Alerts**: saturated CPU, GPU or memory, overheating, disk bottlenecks and large uploads or downloads each get their own color and sound.
 - **No fake numbers**: if a value can't be read, its panel shows **NO SIGNAL** and never a made-up value. When the data comes back, the panel plays a short mount animation.
-- **Staged boot animation**, synthesized sound effects, glow / scanline / screen-curvature post-processing, and nine color themes.
+- **Staged boot animation**, synthesized sound effects, glow / scanline / screen-curvature post-processing, and nine color themes with customizable accent colors.
 
 ## Install
 

@@ -30,6 +30,20 @@
   #hud-panel .themes i { width: 4px; height: 12px; transform: skewX(-20deg); }
   #hud-panel .themes button[aria-pressed="true"] { border-color: var(--hud-hot); }
   #hud-panel .themes button:hover { border-color: var(--hud-dim); }
+  #hud-panel .crow { display: grid; grid-template-columns: 1fr 76px 22px; align-items: center; gap: 6px; margin: 0 0 6px; }
+  #hud-panel .sw { display: flex; align-items: center; gap: 8px; padding: 4px 8px; text-align: left; font-size: 11px; }
+  #hud-panel .sw i { width: 6px; height: 12px; transform: skewX(-20deg); background: var(--c); }
+  #hud-panel .sw:hover { border-color: var(--hud-dim); }
+  #hud-panel .sw[aria-expanded="true"] { border-color: var(--hud-hot); }
+  #hud-panel .crow input[type=text] {
+    width: 100%; box-sizing: border-box; margin: 0; padding: 3px 5px; font: 11px "JetBrains Mono", Consolas, monospace;
+    color: var(--hud-fg); background: none; border: 1px solid var(--hud-line);
+  }
+  #hud-panel .crow input[type=text]:focus { border-color: var(--hud-hot); outline: none; }
+  #hud-panel .crow .x.off { visibility: hidden; }
+  #hud-panel .cedit { padding: 4px 0 6px; }
+  #hud-panel .cedit input[type=range]::-webkit-slider-runnable-track { height: 4px; background: var(--g); }
+  #hud-panel .cedit input[type=range]::-webkit-slider-thumb { margin-top: -5px; background: var(--hud-fg); }
   #hud-panel label { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 2px 8px; margin: 0 0 10px; }
   #hud-panel label.sl input { grid-column: 1 / -1; }
   #hud-panel output { font-variant-numeric: tabular-nums; color: var(--hud-dim); font-size: 11px; }
@@ -143,13 +157,21 @@ const alpha = (hex, a) => {
   const n = parseInt(hex.slice(1), 16);
   return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`;
 };
-let C, themeName;
-function setTheme(name) {
-  themeName = THEMES[name] ? name : 'ember';
-  C = { ...THEMES[themeName] };
+// 可自定义的强调色：覆盖当前主题的同名 token，换主题时保留；底色和中性灰仍跟随主题，保证整体协调
+const ACCENTS = ['hot', 'cool', 'mark', 'alt', 'heat'];
+const HEX = /^#[0-9a-f]{6}$/i;
+let C, themeName, themeKey;
+function setTheme(name, colors = {}) {
+  const base = THEMES[name] ? name : 'ember', key = base + JSON.stringify(colors);
+  if (key === themeKey) return;
+  // 背景层只用到底色和 fg，只改强调色时不必重画
+  const rebuild = base !== themeName;
+  themeName = base; themeKey = key;
+  C = { ...THEMES[base] };
+  for (const k of ACCENTS) if (HEX.test(colors[k] || '')) C[k] = colors[k];
   C.coolDeep = alpha(C.cool, .16);
   document.body.style.background = C.bg;
-  if (window.hudReady) resize();
+  if (rebuild && window.hudReady) resize();
 }
 const F = {
   disp: '"Michroma", "Chakra Petch", sans-serif',
@@ -281,15 +303,23 @@ window.wallpaperPropertyListener = {
   applyGeneralProperties(p) { if (p.fps != null) fpsCap = p.fps; },
   // 在 WE 编辑器里添加一个名为 theme 的组合框属性，值为 THEMES 里的主题名（ember / glacier / phosphor / classic / amber / synthwave / sakura / cobalt / mono）
   // WE 用户属性：theme（组合框）、glow / scan / curve / parallax / sfx（滑块）、hum / fx（复选框），与控制面板共用一套设置
+  // 自定义颜色：customcolors（复选框）+ colorhot / colorcool / colormark / coloralt / colorheat（颜色）；WE 只推送变化的属性，所以开关和取值要记住
   applyUserProperties(p) {
     const patch = {};
     if (p.theme) patch.theme = p.theme.value;
     for (const k of NUM_KEYS) if (p[k]) patch[k] = +p[k].value;
     if (p.hum) patch.hum = !!p.hum.value;
     if (p.fx) patch.fx = !!p.fx.value;
+    let colors = false;
+    if (p.customcolors) { WE_COLORS.on = !!p.customcolors.value; colors = true; }
+    for (const k of ACCENTS) if (p['color' + k]) { WE_COLORS.v[k] = weHex(p['color' + k].value); colors = true; }
+    if (colors) patch.colors = WE_COLORS.on ? { ...WE_COLORS.v } : {};
     applySettings(patch);
   },
 };
+const WE_COLORS = { on: false, v: {} };
+// WE 颜色属性的值是 "r g b"（0–1 浮点）
+const weHex = (s) => '#' + String(s).trim().split(/\s+/).slice(0, 3).map(x => Math.round(clamp01(+x || 0) * 255).toString(16).padStart(2, '0')).join('');
 
 const simState = { cpuB: 0, gpuB: 0, netB: 0, ioB: 0, t0: performance.now() };
 function simulate() {
@@ -1868,7 +1898,8 @@ const SETTINGS_KEY = 'hud-settings-v1';
 // ?mute=1：本窗口不出声（独立壁纸的副屏、设置预览窗口），不影响保存的音量设置
 const MUTE = params.get('mute') === '1';
 // 默认限 60 FPS：高分屏上满刷新率重绘 + 后处理开销很大，60 帧观感差别不大
-const DEFAULTS = { theme: 'ember', fx: true, curve: .5, glow: 0, scan: .4, parallax: .5, sfx: .35, hum: true, fps: 60 };
+// colors：自定义强调色 { hot: '#rrggbb', ... }，空对象表示完全跟随主题。只整体替换，不原地修改（DEFAULTS 里的对象会被共享）
+const DEFAULTS = { theme: 'ember', colors: {}, fx: true, curve: .5, glow: 0, scan: .4, parallax: .5, sfx: .35, hum: true, fps: 60 };
 const NUM_KEYS = Object.keys(DEFAULTS).filter(k => typeof DEFAULTS[k] === 'number');
 // 网址参数优先级最高：载入时和其他窗口改了设置时都叠在最上面
 const URL_CFG = {};
@@ -1876,8 +1907,25 @@ for (const k of NUM_KEYS) if (params.get(k) != null) URL_CFG[k] = +params.get(k)
 if (params.get('theme')) URL_CFG.theme = params.get('theme');
 if (params.get('fx') === '0') URL_CFG.fx = false;
 if (params.get('hum') === '0') URL_CFG.hum = false;
+// ?hot=ff3366&cool=33ccff …：覆盖强调色（不带 #）
+for (const k of ACCENTS) if (HEX.test('#' + params.get(k))) (URL_CFG.colors ||= {})[k] = '#' + params.get(k);
 const resolveCfg = (stored) => ({ ...DEFAULTS, ...stored, ...URL_CFG });
 const cfg = resolveCfg((() => { try { return JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}'); } catch { return {}; } })());
+
+const hexToHsl = (hex) => {
+  const n = parseInt(hex.slice(1), 16), r = (n >> 16) / 255, g = ((n >> 8) & 255) / 255, b = (n & 255) / 255;
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn, l = (mx + mn) / 2;
+  const s = d ? d / (1 - Math.abs(2 * l - 1)) : 0;
+  const h = !d ? 0 : mx === r ? ((g - b) / d + 6) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return [Math.round(h * 60) % 360, Math.round(s * 100), Math.round(l * 100)];
+};
+const hslToHex = ([h, s, l]) => {
+  s /= 100; l /= 100;
+  const a = s * Math.min(l, 1 - l);
+  const f = (n) => { const k = (n + h / 30) % 12; return Math.round((l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1))) * 255).toString(16).padStart(2, '0'); };
+  return '#' + f(0) + f(8) + f(4);
+};
+const CNAME = { hot: '主色', cool: '次色', mark: '标记', alt: '内存告警', heat: '高温告警' };
 
 const panel = (() => {
   const sliders = [
@@ -1891,6 +1939,12 @@ const panel = (() => {
     <section><h3>主题</h3><div class="themes">${Object.keys(THEMES).map(n => `
       <button type="button" data-theme="${n}"><i style="background:${THEMES[n].hot}"></i><i style="background:${THEMES[n].cool}"></i><i style="background:${THEMES[n].mark}"></i><span>${n}</span></button>`).join('')}
     </div></section>
+    <section><h3>自定义颜色</h3>${ACCENTS.map(k => `
+      <div class="crow" data-row="${k}"><button type="button" class="sw" data-edit="${k}" aria-expanded="false"><i></i><span>${CNAME[k]}</span></button><input type="text" data-hex="${k}" maxlength="7" spellcheck="false" aria-label="${CNAME[k]}色值"><button type="button" class="x" data-unset="${k}" aria-label="${CNAME[k]}恢复主题色">×</button></div>`).join('')}
+      <div class="cedit" hidden>${[['h', '色相', 360], ['s', '饱和度', 100], ['l', '亮度', 100]].map(([c, l, mx]) => `
+        <label class="sl"><span>${l}</span><output data-co="${c}"></output><input type="range" min="0" max="${mx}" step="1" data-c="${c}"></label>`).join('')}
+      </div>
+    </section>
     <section><h3>画面</h3>
       <label class="tog"><span>后处理</span><input type="checkbox" data-k="fx"></label>
       ${sliders.map(([k, l, mn, mx]) => `
@@ -1912,6 +1966,14 @@ const panel = (() => {
 
   // 只有键盘打开时才把焦点移进面板；鼠标点开时不动焦点，避免在壁纸宿主里触发多余的输入状态切换
   const toggle = (open = el.hidden, focus = false) => { el.hidden = !open; gear.setAttribute('aria-expanded', String(open)); if (open && focus) el.querySelector('button, input')?.focus(); };
+  // 颜色编辑器：色相 / 饱和度 / 亮度三条滑块，挂在正在编辑的那一行下面（不用 <input type=color>：原生取色弹窗和 <select> 一样有让 WE 崩溃的风险）
+  const edit = el.querySelector('.cedit');
+  let editing = null, hsl = [0, 0, 0];
+  const setColor = (k, hex) => {
+    const colors = { ...cfg.colors };
+    if (hex) colors[k] = hex; else delete colors[k];
+    applySettings({ colors });
+  };
   gear.addEventListener('click', () => toggle());
   el.addEventListener('click', (e) => {
     const t = e.target.closest('button');
@@ -1920,11 +1982,29 @@ const panel = (() => {
     if (t.dataset.theme) applySettings({ theme: t.dataset.theme });
     if (t.dataset.fps != null) applySettings({ fps: +t.dataset.fps });
     if (t.dataset.reset != null) applySettings({ ...DEFAULTS });
+    if (t.dataset.unset) setColor(t.dataset.unset, null);
+    if (t.dataset.edit) {
+      editing = editing === t.dataset.edit ? null : t.dataset.edit;
+      edit.hidden = !editing;
+      if (editing) { hsl = hexToHsl(C[editing]); t.parentElement.after(edit); }
+      sync();
+    }
   });
   el.addEventListener('input', (e) => {
+    const c = e.target.dataset.c;
+    if (c && editing) { hsl['hsl'.indexOf(c)] = +e.target.value; setColor(editing, hslToHex(hsl)); return; }
     const k = e.target.dataset.k;
     if (!k) return;
     applySettings({ [k]: e.target.type === 'checkbox' ? e.target.checked : +e.target.value });
+  });
+  // 色值输入框：回车或失焦时生效，接受 #rgb / #rrggbb（# 可省略），无效输入还原
+  el.addEventListener('change', (e) => {
+    const k = e.target.dataset.hex;
+    if (!k) return;
+    let v = e.target.value.trim().toLowerCase().replace(/^#?/, '#');
+    if (/^#[0-9a-f]{3}$/.test(v)) v = '#' + [...v.slice(1)].map(ch => ch + ch).join('');
+    if (HEX.test(v)) setColor(k, v);
+    e.target.value = C[k];
   });
   // 面板内的按键不触发全局快捷键
   el.addEventListener('keydown', (e) => { if (e.key === 'Escape') toggle(false); e.stopPropagation(); });
@@ -1938,21 +2018,41 @@ const panel = (() => {
 
   // ?panel=1：载入时直接打开面板（独立壁纸托盘菜单的「设置」窗口）
   if (params.get('panel') === '1') toggle(true);
-  return {
-    sync() {
-      for (const inp of el.querySelectorAll('[data-k]')) {
-        const v = cfg[inp.dataset.k];
-        if (inp.type === 'checkbox') inp.checked = !!v;
-        else inp.value = v;
-        if (inp.type === 'range') inp.style.setProperty('--p', `${(v - inp.min) / (inp.max - inp.min) * 100}%`);
+  const sync = () => {
+    for (const k of ACCENTS) {
+      const row = el.querySelector(`[data-row="${k}"]`), tx = row.querySelector('[data-hex]');
+      row.style.setProperty('--c', C[k]);
+      if (document.activeElement !== tx) tx.value = C[k];
+      row.querySelector('[data-unset]').classList.toggle('off', !cfg.colors[k]);
+      row.querySelector('[data-edit]').setAttribute('aria-expanded', String(editing === k));
+    }
+    if (editing) {
+      // 换主题或恢复默认后，编辑器跟着当前颜色走；拖动时两者一致，不会让色相在灰色上跳动
+      if (hslToHex(hsl) !== C[editing]) hsl = hexToHsl(C[editing]);
+      const [h, s, l] = hsl, g = {
+        h: `linear-gradient(to right, ${[0, 60, 120, 180, 240, 300, 360].map(x => `hsl(${x} ${s}% ${l}%)`).join(', ')})`,
+        s: `linear-gradient(to right, hsl(${h} 0% ${l}%), hsl(${h} 100% ${l}%))`,
+        l: `linear-gradient(to right, #000, hsl(${h} ${s}% 50%), #fff)`,
+      };
+      for (const c of 'hsl') {
+        const inp = edit.querySelector(`[data-c="${c}"]`), v = hsl['hsl'.indexOf(c)];
+        inp.value = v; inp.style.setProperty('--g', g[c]);
+        edit.querySelector(`[data-co="${c}"]`).textContent = c === 'h' ? `${v}°` : `${v}%`;
       }
-      for (const o of el.querySelectorAll('[data-o]')) o.textContent = Math.round(cfg[o.dataset.o] * 100) + '%';
-      for (const b of el.querySelectorAll('[data-theme]')) b.setAttribute('aria-pressed', String(b.dataset.theme === themeName));
-      for (const b of el.querySelectorAll('[data-fps]')) b.setAttribute('aria-pressed', String(+b.dataset.fps === cfg.fps));
-      el.querySelector('[data-k="fx"]').disabled = !window.hudFx;
-      for (const k of ['curve', 'glow', 'scan']) el.querySelector(`[data-k="${k}"]`).disabled = !window.hudFx || !cfg.fx;
-    },
+    }
+    for (const inp of el.querySelectorAll('[data-k]')) {
+      const v = cfg[inp.dataset.k];
+      if (inp.type === 'checkbox') inp.checked = !!v;
+      else inp.value = v;
+      if (inp.type === 'range') inp.style.setProperty('--p', `${(v - inp.min) / (inp.max - inp.min) * 100}%`);
+    }
+    for (const o of el.querySelectorAll('[data-o]')) o.textContent = Math.round(cfg[o.dataset.o] * 100) + '%';
+    for (const b of el.querySelectorAll('[data-theme]')) b.setAttribute('aria-pressed', String(b.dataset.theme === themeName));
+    for (const b of el.querySelectorAll('[data-fps]')) b.setAttribute('aria-pressed', String(+b.dataset.fps === cfg.fps));
+    el.querySelector('[data-k="fx"]').disabled = !window.hudFx;
+    for (const k of ['curve', 'glow', 'scan']) el.querySelector(`[data-k="${k}"]`).disabled = !window.hudFx || !cfg.fx;
   };
+  return { sync };
 })();
 
 // 面板配色跟随主题
@@ -1965,7 +2065,8 @@ function themeCss() {
 function applySettings(patch = {}, save = true) {
   Object.assign(cfg, patch);
   if (!THEMES[cfg.theme]) cfg.theme = 'ember';
-  if (cfg.theme !== themeName) setTheme(cfg.theme);
+  if (!cfg.colors || typeof cfg.colors !== 'object') cfg.colors = {};
+  setTheme(cfg.theme, cfg.colors);
   themeCss();
   FX.curve = cfg.curve; FX.glow = cfg.glow; FX.scan = cfg.scan;
   if (window.hudFx) window.hudFx.set(cfg.fx);
