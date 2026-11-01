@@ -344,7 +344,7 @@ dependencies = [
 
 [[package]]
 name = "hud-telemetry"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "raw-window-handle",
  "serde_json",
